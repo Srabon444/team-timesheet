@@ -2,7 +2,8 @@
 // Keeps the toolbar badge reflecting timer state even when the popup is
 // closed. Event-driven (storage.onChanged) for start/stop; chrome.alarms
 // (min 1min granularity, survives service-worker suspension) ticks the
-// elapsed-time display while a timer runs.
+// elapsed-time display while a timer runs. Also fires a once-per-day OS
+// notification when today's tracked time crosses the configured limit.
 
 const ALARM = "tick";
 const pad = (n) => String(n).padStart(2, "0");
@@ -38,10 +39,32 @@ async function syncBadge() {
   }
 }
 
+async function checkDailyLimit() {
+  const { entries, timer, dailyLimitHours, warnedDate, date } = await chrome.storage.local.get(
+    ["entries", "timer", "dailyLimitHours", "warnedDate", "date"]
+  );
+  if (!dailyLimitHours) return; // not configured yet
+  let totalSec = (entries || []).reduce((sum, e) => sum + (e.accSec || 0), 0);
+  if (timer && timer.activeId && timer.startedAt) {
+    totalSec += (Date.now() - timer.startedAt) / 1000;
+  }
+  if (totalSec >= dailyLimitHours * 3600 && warnedDate !== date) {
+    chrome.notifications.create("daily-limit", {
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: "Daily limit reached",
+      message: `You've tracked ${dailyLimitHours}+ hour(s) today.`,
+    });
+    await chrome.storage.local.set({ warnedDate: date });
+  }
+}
+
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.timer) syncBadge();
+  if (area !== "local") return;
+  if (changes.timer) syncBadge();
+  if (changes.timer || changes.entries) checkDailyLimit();
 });
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === ALARM) running(); });
-chrome.runtime.onInstalled.addListener(syncBadge);
-chrome.runtime.onStartup.addListener(syncBadge);
+chrome.runtime.onInstalled.addListener(() => { syncBadge(); checkDailyLimit(); });
+chrome.runtime.onStartup.addListener(() => { syncBadge(); checkDailyLimit(); });
 syncBadge(); // service worker (re)start while a timer was already running

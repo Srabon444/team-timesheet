@@ -40,6 +40,8 @@ async function init() {
   S.timer = S.timer || { activeId: null, startedAt: null };
   S.history = S.history || {};
   S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
+  S.dailyLimitHours = S.dailyLimitHours || 8;
+  S.warnedDate = S.warnedDate === undefined ? null : S.warnedDate;
   const today = todayStr();
   if (S.date !== today) {
     // Archive the outgoing day's entries before clearing them — skip on the

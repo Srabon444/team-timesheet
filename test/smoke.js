@@ -510,7 +510,10 @@ async function harness3() {
       setTitle: ({ title }) => { badge.title = title; },
     },
     storage: {
-      local: { get: async (k) => (Array.isArray(k) ? Object.fromEntries(k.map((x) => [x, store[x]])) : { [k]: store[k] }) },
+      local: {
+        get: async (k) => (Array.isArray(k) ? Object.fromEntries(k.map((x) => [x, store[x]])) : { [k]: store[k] }),
+        set: async (obj) => { Object.assign(store, obj); },
+      },
       onChanged: { addListener: (fn) => listeners.changed.push(fn) },
     },
     alarms: {
@@ -578,6 +581,38 @@ async function harness3() {
   await Promise.all(listeners.startup.map((f) => f()));
   await sleep(20);
   A(badge.color === "#16a34a" && alarmCfg !== null, "onStartup re-syncs badge + alarm to running state from storage");
+
+  // DAILY LIMIT NOTIFICATION
+  const notifications = [];
+  chrome.notifications = { create: (id, opts) => { notifications.push({ id, opts }); } };
+  store.dailyLimitHours = 1; // 1 hour, easy to cross in the test
+  store.warnedDate = null;
+  store.date = "2026-07-10";
+  store.entries = [{ id: "e1", project: "ZuPOS", accSec: 0 }];
+  store.timer = { activeId: null, startedAt: null };
+
+  // under the limit -> no notification
+  fireChange({ entries: [{ id: "e1", project: "ZuPOS", accSec: 1800 }] }); // 30 min
+  await sleep(20);
+  A(notifications.length === 0, "no notification while under the daily limit");
+
+  // crosses the limit -> fires exactly once
+  fireChange({ entries: [{ id: "e1", project: "ZuPOS", accSec: 3700 }] }); // 61 min > 1h limit
+  await sleep(20);
+  A(notifications.length === 1, "notification fires once when crossing the daily limit");
+  A(store.warnedDate === store.date, "warnedDate recorded after firing");
+
+  // still over the limit on a later change same day -> does not fire again
+  fireChange({ entries: [{ id: "e1", project: "ZuPOS", accSec: 4000 }] });
+  await sleep(20);
+  A(notifications.length === 1, "notification does not repeat the same day");
+
+  // new day -> warnedDate no longer matches -> can fire again
+  store.date = "2026-07-11";
+  store.warnedDate = "2026-07-10";
+  fireChange({ entries: [{ id: "e1", project: "ZuPOS", accSec: 4000 }] });
+  await sleep(20);
+  A(notifications.length === 2, "notification can fire again on a new day");
 }
 
 // ============================================================
