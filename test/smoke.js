@@ -171,6 +171,7 @@ async function harness1() {
   A(!$("confirmOverlay").classList.contains("hidden"), "custom confirm modal shown (no native confirm())");
   A($("confirmMsg").textContent.includes("Submit 2 project"), "modal message summarizes the submission");
   A($("confirmMsg").textContent.length < 400, "modal message is a reasonable length (won't overflow)");
+  A($("confirmYes").textContent === "Yes, submit", "Final Submit confirm button reads the default 'Yes, submit'");
   $("confirmNo").click();
   await sleep(30);
   A(lastFill === null, "Cancel in modal -> no form fill");
@@ -339,6 +340,7 @@ async function harness1() {
   win.document.querySelector(".entry .del").click();
   await sleep(20);
   A(!$("confirmOverlay").classList.contains("hidden"), "delete with confirmBeforeDelete on shows the modal");
+  A($("confirmYes").textContent === "Yes, delete", "delete confirm button reads 'Yes, delete', not the generic 'Yes, submit'");
   A(store.entries.length === beforeCount, "entry not yet deleted while modal is open");
   $("confirmNo").click();
   await sleep(20);
@@ -878,6 +880,7 @@ async function harness5() {
   $("resetEverything").click();
   await sleep(20);
   A(!$("confirmOverlay").classList.contains("hidden"), "Reset everything shows the confirm modal (never native confirm())");
+  A($("confirmYes").textContent === "Yes, reset", "reset confirm button reads 'Yes, reset', not the generic 'Yes, submit'");
   $("confirmYes").click();
   await sleep(20);
   A(store.entries.length === 0, "reset clears entries");

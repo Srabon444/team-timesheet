@@ -132,7 +132,7 @@ function renderSettings() {
 
 async function resetEverything() {
   const msg = "Delete all tasks, history, and settings? This cannot be undone. Your name is kept.";
-  if (!(await showConfirm(msg))) return;
+  if (!(await showConfirm(msg, "Yes, reset"))) return;
   S.entries = [];
   S.history = {};
   S.timer = { activeId: null, startedAt: null };

@@ -2,76 +2,108 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 
 .shell { display: flex; min-height: 100vh; }
 .sidebar {
-  width: 200px;
+  width: 220px;
   flex: none;
   background: var(--bg-surface);
   border-right: 1px solid var(--border-color);
-  padding: 16px 10px;
+  padding: 20px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.brand { font-weight: 600; font-size: 14px; padding: 0 8px 16px; }
+.brand { font-weight: 600; font-size: 16px; padding: 0 8px 20px; }
 .navBtn {
   text-align: left;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-radius: 6px;
   border: none;
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
 }
 .navBtn:hover { background: var(--bg-surface-hover); }
 .navBtn.active { background: var(--accent); color: var(--text-on-accent); }
 
-.content { flex: 1; padding: 24px; max-width: 900px; }
+/* Tab-only scale-up: popup.css's sizes (13px base, tight paddings) were
+   tuned for the cramped 340px popup and read too small in a full tab.
+   These override that shared stylesheet's rules, scoped to `.content` so
+   the popup itself is completely unaffected. */
+.content {
+  flex: 1;
+  padding: 32px;
+  max-width: 1040px;
+  font-size: 15px;
+}
+.content h1 { font-size: 24px; }
+.content h2 { font-size: 15px; margin: 24px 0 10px; }
+.content label { font-size: 14px; margin: 10px 0 4px; }
+.content select, .content input[type=text], .content input[type=time] {
+  font-size: 15px;
+  padding: 11px 14px;
+}
+.content .btn { font-size: 15px; padding: 12px; }
+.content .link { font-size: 14px; }
+.content .who { font-size: 17px; }
+.content .status { font-size: 13px; }
+.content .confirmBox p { font-size: 15px; }
+.content .searchItem { font-size: 15px; padding: 10px 14px; }
+
+.content .entry { padding: 14px; }
+.content .entry .pname, .content .entry .cat, .content .submittedBadge { font-size: 12px; padding: 4px 10px; }
+.content .entry .desc { font-size: 13px; }
+.content .entry .time { width: 90px; }
+.content .entry .tbtn { width: 38px; height: 36px; font-size: 15px; }
+.content .entry .edit, .content .entry .del { width: 34px; height: 34px; font-size: 15px; }
+.content .entry .del { font-size: 18px; }
+.content .entry .live { font-size: 14px; min-width: 80px; }
+.content .statusDot { width: 10px; height: 10px; }
+
 /* Today panel keeps the popup's comfortable form width, but centers it in
    the tab's much wider viewport instead of pinning it to the left edge
    (which read as a stuck "mobile view" island on a real monitor). Widened
    from the popup's 420px to fit the two-column layout below. */
-.panel .wrap { padding: 0; max-width: 760px; margin: 0 auto; }
+.panel .wrap { padding: 0; max-width: 980px; margin: 0 auto; }
 
-/* Tab-only: the add-project form sits on the left, today's tracked
-   projects on the right (inspired by the reference layout) — a wide-screen
+/* Tab-only: today's tracked projects sit on the left, the add-project form
+   on the right (inspired by the reference layout) — a wide-screen
    improvement over stacking them, which the popup keeps doing since it
    doesn't have the width to spare. */
-.todayCols { display: grid; grid-template-columns: 300px 1fr; gap: 28px; align-items: start; }
-.todayCols h2 { margin-top: 0; }
+.todayCols { display: grid; grid-template-columns: 1fr 360px; gap: 36px; align-items: start; margin-top: 24px; }
 
 /* The confirm modal's box is sized (width:100%) for the 340px popup — in a
    full browser tab that stretches edge to edge. Cap it here to a normal
    dialog width. */
-.confirmBox { max-width: 480px; margin: 0 auto; }
+.confirmBox { max-width: 480px; margin: 0 auto; padding: 20px; }
 
-.statTiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+.statTiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 20px 0; }
 .statTile {
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 12px;
+  padding: 16px;
 }
-.statTile .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
-.statTile .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
-.statTile .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.statTile .label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.statTile .value { font-size: 26px; font-weight: 600; margin-top: 6px; }
+.statTile .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
-.breakdownRow { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
-.breakdownRow .name { width: 120px; flex: none; color: var(--text-secondary); }
-.breakdownRow .bar { flex: 1; height: 8px; background: var(--bg-surface-2); border-radius: 4px; overflow: hidden; }
+.breakdownRow { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
+.breakdownRow .name { width: 150px; flex: none; color: var(--text-secondary); }
+.breakdownRow .bar { flex: 1; height: 10px; background: var(--bg-surface-2); border-radius: 4px; overflow: hidden; }
 .breakdownRow .bar > span { display: block; height: 100%; background: var(--accent); }
-.breakdownRow .amount { width: 60px; flex: none; text-align: right; color: var(--text-muted); }
+.breakdownRow .amount { width: 70px; flex: none; text-align: right; color: var(--text-muted); }
 
-.settingsRow { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border-color); }
-.settingsRow .label { font-size: 13px; }
-.settingsRow .desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.dangerZone { margin-top: 24px; padding: 12px; border: 1px solid var(--danger); border-radius: 8px; }
+.settingsRow { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--border-color); }
+.settingsRow .label { font-size: 15px; }
+.settingsRow .desc { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+.dangerZone { margin-top: 28px; padding: 16px; border: 1px solid var(--danger); border-radius: 8px; }
 
-.weekNav { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
-.weekChart { display: flex; align-items: flex-end; gap: 8px; height: 140px; padding: 8px 0; border-bottom: 1px solid var(--border-color); }
-.weekChart .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.weekNav { display: flex; align-items: center; gap: 14px; margin: 16px 0 10px; font-size: 15px; }
+.weekChart { display: flex; align-items: flex-end; gap: 10px; height: 180px; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
+.weekChart .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 /* dataviz: bar mark spec is "cap it, never fill the slot" (<=24px thick) — the
    column flexes to share the chart width, but the bar itself stays capped and
    centered, leaving air on either side. */
-.weekChart .bar { width: 100%; max-width: 24px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+.weekChart .bar { width: 100%; max-width: 28px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
 .weekChart .col.today .bar { background: var(--success); }
-.weekChart .dow { font-size: 11px; color: var(--text-muted); }
+.weekChart .dow { font-size: 12px; color: var(--text-muted); }

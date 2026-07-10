@@ -210,9 +210,10 @@ function clearDraft() {
 // Custom confirm modal — window.confirm() is unreliable inside extension
 // popups (can render cropped/off-screen and Chrome may tear down the popup
 // before a click registers), so use an in-DOM overlay instead.
-function showConfirm(message) {
+function showConfirm(message, yesLabel) {
   return new Promise((resolve) => {
     $("confirmMsg").textContent = message;
+    $("confirmYes").textContent = yesLabel || "Yes, submit";
     $("confirmOverlay").classList.remove("hidden");
     const done = (result) => {
       $("confirmOverlay").classList.add("hidden");
@@ -335,7 +336,7 @@ function render() {
 }
 async function deleteEntry(id) {
   if (S.confirmBeforeDelete !== false) {
-    if (!(await showConfirm("Delete this project entry?"))) return;
+    if (!(await showConfirm("Delete this project entry?", "Yes, delete"))) return;
   }
   if (S.timer.activeId === id) S.timer = { activeId: null, startedAt: null };
   S.entries = S.entries.filter((x) => x.id !== id);
