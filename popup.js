@@ -51,7 +51,11 @@ async function init() {
   S.timer = S.timer || { activeId: null, startedAt: null };
   S.history = S.history || {};
   S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
+  const dailyLimitWasUnset = S.dailyLimitHours === undefined;
   S.dailyLimitHours = S.dailyLimitHours || 8;
+  // background.js reads dailyLimitHours from storage directly (separate realm),
+  // so the default must be persisted here, not just held in memory.
+  if (dailyLimitWasUnset) await chrome.storage.local.set({ dailyLimitHours: S.dailyLimitHours });
   S.warnedDate = S.warnedDate === undefined ? null : S.warnedDate;
   S.theme = S.theme || "dark";
   const today = todayStr();

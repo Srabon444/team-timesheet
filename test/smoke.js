@@ -57,6 +57,7 @@ async function harness1() {
   const vis = (id) => !$(id).classList.contains("hidden");
 
   A(vis("setup") && !vis("main"), "first run shows setup view");
+  A(store.dailyLimitHours === 8, "dailyLimitHours default persisted to storage on first init (not just in-memory), so background.js can read it");
 
   $("loadNames").click();
   await sleep(80);
