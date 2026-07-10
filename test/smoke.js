@@ -69,7 +69,10 @@ async function harness1() {
   // like a native <select>), click-to-select, and Enter-to-select
   $("nameSelect").dispatchEvent(new win.Event("focus"));
   await sleep(10);
-  A(win.document.querySelectorAll("#nameList .searchItem").length === 21, "focusing an empty search shows all 21 names");
+  A(win.document.getElementById("nameList").classList.contains("hidden"), "focus alone (e.g. page-load autofocus) does NOT pop the list open");
+  $("nameSelect").dispatchEvent(new win.Event("click"));
+  await sleep(10);
+  A(win.document.querySelectorAll("#nameList .searchItem").length === 21, "clicking an empty search shows all 21 names");
   $("nameSelect").value = "raful"; // mid-word substring of "Ashraful" -- not a prefix
   $("nameSelect").dispatchEvent(new win.Event("input"));
   await sleep(10);
@@ -95,8 +98,11 @@ async function harness1() {
   // project searchable combobox: same substring behavior, plus Enter-to-select
   $("projSelect").dispatchEvent(new win.Event("focus"));
   await sleep(10);
+  A(win.document.getElementById("projList").classList.contains("hidden"), "focus alone does NOT pop the project list open either");
+  $("projSelect").dispatchEvent(new win.Event("click"));
+  await sleep(10);
   const projAll = [...win.document.querySelectorAll("#projList .searchItem")].map((n) => n.textContent);
-  A(projAll.length === 11, "focusing project search with no filter shows all 11 projects");
+  A(projAll.length === 11, "clicking project search with no filter shows all 11 projects");
   A(JSON.stringify(projAll) === JSON.stringify([...projAll].sort((a, b) => a.localeCompare(b))), "projects list rendered alphabetically sorted");
   $("projSelect").value = "uPO"; // mid-word substring of ZuPOS
   $("projSelect").dispatchEvent(new win.Event("input"));
@@ -182,25 +188,49 @@ async function harness1() {
   // regression guard: user reported cold-start failures fixed by manually
   // reloading; ensureFormTab now auto-reloads once for a brand-NEW tab...
   A(reloadCount === 1, `ensureFormTab reloads once for a newly created tab (got ${reloadCount})`);
+  A(store.entries.every((e) => e.submitted), "every entry is marked submitted after a successful Final Submit");
 
-  // ...but must NOT reload a REUSED tab — that could hold in-progress
-  // session-only entries (Fillout doesn't persist them until real Submit).
-  reloadCount = 0;
-  queryReturnsExisting = true;
+  // BUG FIX regression: clicking Final Submit again with nothing new pending
+  // must NOT re-send the already-submitted entries a second time.
   lastFill = null;
   $("finalSubmit").click();
+  await sleep(20);
+  A(lastFill === null, "Final Submit with everything already submitted does not resubmit anything");
+  A($("submitStatus").textContent.toLowerCase().includes("already submitted"), "status explains everything is already submitted");
+
+  // Add ONE new entry -> only that new entry should be sent next time, not
+  // the two already-submitted ones. Also re-verifies the reused-tab reload
+  // skip (that could hold in-progress session-only entries — Fillout
+  // doesn't persist them until the real Submit).
+  reloadCount = 0;
+  queryReturnsExisting = true;
+  $("projSelect").value = "Hydroflux";
+  $("descInput").value = "Third task";
+  $("addProject").click();
+  await sleep(20);
+  const entryTimes = win.document.querySelectorAll(".entry .time");
+  const thirdTimeInp = entryTimes[entryTimes.length - 1];
+  thirdTimeInp.value = "00:45";
+  thirdTimeInp.dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  lastFill = null;
+  fillFormReturn = { added: 1 };
+  $("finalSubmit").click();
   await sleep(30);
+  A($("confirmMsg").textContent.includes("Submit 1 project"), "confirm modal counts only the new pending entry, not the already-submitted ones");
   $("confirmYes").click();
   await sleep(300);
+  A(Array.isArray(lastFill) && lastFill.length === 1 && lastFill[0].description === "Third task", "second Final Submit re-sends only the NEW entry — no duplicates of the first two");
   A(reloadCount === 0, `ensureFormTab does NOT reload a reused/existing tab (got ${reloadCount})`);
   queryReturnsExisting = false;
 
   // delete an entry
+  const countBeforeDelete = store.entries.length;
   win.document.querySelector(".entry .del").click();
   await sleep(20);
   $("confirmYes").click();
   await sleep(20);
-  A(store.entries.length === 1, "delete removes entry");
+  A(store.entries.length === countBeforeDelete - 1, "delete removes entry");
 
   // EDIT an existing entry
   win.document.querySelector(".entry .edit").click();
@@ -218,6 +248,15 @@ async function harness1() {
   A(store.draft === null, "draft cleared after save");
   A($("addProject").textContent === "+ Add Project", "add button reverts after save");
   A(!vis("cancelEdit"), "cancel button hidden after save");
+
+  // CATEGORY COLOR CODING: each rendered entry's category badge gets a
+  // distinct background color, and an unrecognized category falls back
+  // gracefully instead of rendering blank/uncolored.
+  const catEl = win.document.querySelector(".entry .cat");
+  A(catEl && catEl.style.background, "category badge has a background color set");
+  A(win.categoryColor("Development") !== win.categoryColor("Code Review"), "different categories get different colors");
+  A(win.categoryColor("Development") === win.categoryColor("Development"), "same category is always the same color");
+  A(!!win.categoryColor("Some Unknown Category"), "an unrecognized category still gets a fallback color, not blank/undefined");
 
   // DRAFT persistence across popup reopen (half-filled, not added)
   $("descInput").value = "half typed";
@@ -763,6 +802,13 @@ async function harness5() {
   A($("tileToday").textContent === "01:00", "Today tile reflects today's tracked time");
   A($("weekChart").children.length === 7, "week chart renders 7 day columns");
   A($("byProjectList").textContent.includes("ZuPOS"), "by-project breakdown lists ZuPOS");
+  A($("byCategoryList").textContent.includes("Development"), "by-category breakdown lists Development");
+  const catBar = win.document.querySelector("#byCategoryList .breakdownRow .bar > span");
+  // jsdom normalizes hex -> rgb() on style read-back, so compare both sides
+  // through the same normalization rather than the raw hex string.
+  const expectedCatColor = win.document.createElement("div");
+  expectedCatColor.style.background = win.categoryColor("Development");
+  A(catBar && catBar.style.background === expectedCatColor.style.background, "Dashboard's by-category bar is colored per-category, not a generic accent color");
 
   const prevLabel = $("weekLabel").textContent;
   $("weekPrev").click();
@@ -797,6 +843,7 @@ async function harness5() {
   store.names = ["Debjit Paul", "Ashis Hira"];
   win.S.names = store.names;
   $("settingsNameInput").dispatchEvent(new win.Event("focus"));
+  $("settingsNameInput").dispatchEvent(new win.Event("click"));
   await sleep(10);
   const settingsRow = [...win.document.querySelectorAll("#settingsNameList .searchItem")].find((n) => n.textContent === "Ashis Hira");
   A(!!settingsRow, "Settings name picker lists names from S.names");

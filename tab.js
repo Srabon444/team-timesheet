@@ -103,7 +103,7 @@ function renderDashboard() {
   document.getElementById("tileBusiest").textContent = busiest ? secToHHMM(busiest.total) : "—";
   document.getElementById("tileBusiestSub").textContent = busiest ? busiest.date : "";
 
-  const renderBreakdown = (containerId, totalsMap) => {
+  const renderBreakdown = (containerId, totalsMap, colorFn) => {
     const container = document.getElementById(containerId);
     container.innerHTML = "";
     const entries = Object.entries(totalsMap).sort((a, b) => b[1] - a[1]);
@@ -113,13 +113,15 @@ function renderDashboard() {
       row.className = "breakdownRow";
       row.innerHTML = `<div class="name"></div><div class="bar"><span></span></div><div class="amount"></div>`;
       row.querySelector(".name").textContent = name;
-      row.querySelector(".bar > span").style.width = `${(secs / max) * 100}%`;
+      const bar = row.querySelector(".bar > span");
+      bar.style.width = `${(secs / max) * 100}%`;
+      if (colorFn) bar.style.background = colorFn(name);
       row.querySelector(".amount").textContent = secToHHMM(secs);
       container.appendChild(row);
     }
   };
   renderBreakdown("byProjectList", byProject(daysMap));
-  renderBreakdown("byCategoryList", byCategory(daysMap));
+  renderBreakdown("byCategoryList", byCategory(daysMap), categoryColor);
 }
 
 function renderSettings() {

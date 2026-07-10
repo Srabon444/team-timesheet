@@ -61,8 +61,25 @@ select:focus, input:focus { outline: none; border-color: var(--accent); }
 }
 .entry.active { border-color: var(--accent); }
 .entry .row1 { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.entry .row1 > div:first-child { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .entry .pname { font-weight: 600; }
-.entry .cat { font-size: 11px; color: var(--text-muted); }
+.entry .cat {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.submittedBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
 .entry .desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; word-break: break-word; }
 .entry .row2 { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .entry .time { width: 74px; text-align: center; font-variant-numeric: tabular-nums; }

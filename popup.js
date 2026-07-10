@@ -5,6 +5,18 @@ const PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "N
   "Prowork", "Rina CRM", "SME Taskhub", "VSB", "Worksite Mini ERP", "ZuPOS"];
 const CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
+// Category color coding, matching the reference screenshots' Topic badges.
+const CATEGORY_COLORS = {
+  "Meeting (General)": "#f59e0b",
+  "Meeting (Technical)": "#38bdf8",
+  "Development": "#8b5cf6",
+  "Code Review": "#22c55e",
+  "Miscellaneous": "#ef4444",
+};
+const CATEGORY_FALLBACK_COLOR = "#64748b"; // any category not in the map above
+function categoryColor(cat) {
+  return CATEGORY_COLORS[cat] || CATEGORY_FALLBACK_COLOR;
+}
 
 var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
 let tick = null;
@@ -234,7 +246,11 @@ function setupSearchSelect(input, listEl, getOptions) {
     rows.forEach((r, i) => r.classList.toggle("hi", i === hi));
     if (rows[hi]) rows[hi].scrollIntoView({ block: "nearest" });
   }
-  input.addEventListener("focus", () => { beforeFocus = input.value; input.select(); render(""); });
+  // Focus only places the cursor (e.g. programmatic autofocus on page load) —
+  // it must NOT pop the list open on its own. The list opens on an explicit
+  // click, or as soon as the user starts typing.
+  input.addEventListener("focus", () => { beforeFocus = input.value; input.select(); });
+  input.addEventListener("click", () => render(input.value === beforeFocus ? "" : input.value));
   input.addEventListener("input", () => { hi = -1; render(input.value); });
   input.addEventListener("keydown", (e) => {
     const rows = [...listEl.children];
@@ -265,7 +281,8 @@ function render() {
       <div class="row1">
         <div>
           <span class="pname"></span>
-          <div class="cat"></div>
+          <span class="cat"></span>
+          ${e.submitted ? '<span class="submittedBadge">Submitted</span>' : ""}
         </div>
         <div class="acts">
           <button class="edit" title="Edit">Edit</button>
@@ -279,7 +296,9 @@ function render() {
         <span class="live">${active ? secToHHMMSS(elapsedSec(e)) : ""}</span>
       </div>`;
     div.querySelector(".pname").textContent = e.project;
-    div.querySelector(".cat").textContent = e.category;
+    const catEl = div.querySelector(".cat");
+    catEl.textContent = e.category;
+    catEl.style.background = categoryColor(e.category);
     div.querySelector(".desc").textContent = e.description;
     div.querySelector(".tbtn").onclick = () => (active ? pauseTimer() : startTimer(e.id));
     div.querySelector(".edit").onclick = () => startEdit(e.id);
@@ -404,7 +423,16 @@ async function finalSubmit() {
   foldActive();
   await persist();
   render();
-  const payload = S.entries.map((e) => ({
+  // Only re-submit entries that haven't gone through yet — otherwise a
+  // second Final Submit click (e.g. after adding one more project) would
+  // re-add every already-submitted entry a second time in the real form.
+  const pending = S.entries.filter((e) => !e.submitted);
+  if (!pending.length) {
+    st.className = "status err";
+    st.textContent = "All projects already submitted today. Add a new one to submit more.";
+    return;
+  }
+  const payload = pending.map((e) => ({
     project: e.project,
     category: e.category,
     description: e.description,
@@ -426,12 +454,17 @@ async function finalSubmit() {
     const tabId = await ensureFormTab();
     st.textContent = "Filling entries…";
     const out = await fillFormOnPage(tabId, payload, S.name);
+    // fillFormOnPage processes `pending` in order and stops at the first
+    // failure, so the first `added` of them are the ones that succeeded.
+    const addedCount = out ? out.added : 0;
+    for (let i = 0; i < addedCount; i++) pending[i].submitted = true;
+    if (addedCount > 0) { await persist(); render(); }
     if (out && out.error) {
       st.className = "status err";
-      st.textContent = "Stopped: " + out.error + (out.added != null ? ` (${out.added} added)` : "");
+      st.textContent = "Stopped: " + out.error + ` (${addedCount} added)`;
     } else {
       st.className = "status ok";
-      st.textContent = `Done — ${out ? out.added : payload.length} entries added. Review & Submit manually.`;
+      st.textContent = `Done — ${addedCount} entries added. Review & Submit manually.`;
     }
   } catch (err) {
     st.className = "status err";
