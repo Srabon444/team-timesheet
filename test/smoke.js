@@ -754,6 +754,55 @@ async function harness5() {
   await sleep(20);
   A($("weekLabel").textContent === prevLabel, "clicking next returns to the original week");
 
+  // SETTINGS: daily limit, confirm-before-delete, theme, reset everything
+  $("navSettings").click();
+  await sleep(20);
+  A($("dailyLimitSelect").value === "8", "daily limit select reflects the default (8h)");
+  A($("confirmDeleteToggle").checked === true, "confirm-before-delete checkbox reflects the default (on)");
+
+  $("dailyLimitSelect").value = "4";
+  $("dailyLimitSelect").dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  A(store.dailyLimitHours === 4, "changing the daily limit select persists it");
+
+  $("confirmDeleteToggle").checked = false;
+  $("confirmDeleteToggle").dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  A(store.confirmBeforeDelete === false, "unchecking confirm-before-delete persists it off");
+
+  $("themeLight").click();
+  await sleep(20);
+  A(store.theme === "light", "clicking Light persists the theme");
+  A(win.document.documentElement.dataset.theme === "light", "clicking Light applies data-theme immediately");
+
+  // name picker in Settings updates S.name and refreshes the Today panel
+  store.names = ["Debjit Paul", "Ashis Hira"];
+  win.S.names = store.names;
+  $("settingsNameInput").dispatchEvent(new win.Event("focus"));
+  await sleep(10);
+  const settingsRow = [...win.document.querySelectorAll("#settingsNameList .searchItem")].find((n) => n.textContent === "Ashis Hira");
+  A(!!settingsRow, "Settings name picker lists names from S.names");
+  settingsRow.dispatchEvent(new win.Event("mousedown"));
+  await sleep(20);
+  A(store.name === "Ashis Hira", "picking a name in Settings updates the saved name");
+
+  // reset everything — goes through showConfirm, clears data, keeps name
+  store.entries = [{ id: "e9", project: "ZuPOS", category: "Development", description: "keep-or-not", accSec: 100 }];
+  store.history = { "2026-07-01": [{ id: "old", project: "VSB", category: "Development", accSec: 500 }] };
+  await win.init();
+  await sleep(20);
+  $("resetEverything").click();
+  await sleep(20);
+  A(!$("confirmOverlay").classList.contains("hidden"), "Reset everything shows the confirm modal (never native confirm())");
+  $("confirmYes").click();
+  await sleep(20);
+  A(store.entries.length === 0, "reset clears entries");
+  A(store.history && Object.keys(store.history).length === 0, "reset clears history");
+  A(store.dailyLimitHours === 8, "reset restores the default daily limit");
+  A(store.confirmBeforeDelete === true, "reset restores confirm-before-delete to on");
+  A(store.theme === "dark", "reset restores the default theme");
+  A(store.name === "Ashis Hira", "reset KEEPS the name");
+
   dom.window.close();
 }
 

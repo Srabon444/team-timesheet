@@ -122,6 +122,36 @@ function renderDashboard() {
   renderBreakdown("byCategoryList", byCategory(daysMap));
 }
 
+function renderSettings() {
+  document.getElementById("dailyLimitSelect").value = String(S.dailyLimitHours || 8);
+  document.getElementById("confirmDeleteToggle").checked = S.confirmBeforeDelete !== false;
+  document.getElementById("settingsNameInput").value = S.name || "";
+}
+
+async function resetEverything() {
+  const msg = "Delete all tasks, history, and settings? This cannot be undone. Your name is kept.";
+  if (!(await showConfirm(msg))) return;
+  S.entries = [];
+  S.history = {};
+  S.timer = { activeId: null, startedAt: null };
+  S.draft = null;
+  S.lastProject = null;
+  S.lastCategory = null;
+  S.dailyLimitHours = 8;
+  S.confirmBeforeDelete = true;
+  S.theme = "dark";
+  S.warnedDate = null;
+  await chrome.storage.local.set({
+    entries: [], history: {}, timer: S.timer, draft: null,
+    lastProject: null, lastCategory: null,
+    dailyLimitHours: 8, confirmBeforeDelete: true, theme: "dark", warnedDate: null,
+  });
+  document.documentElement.dataset.theme = resolveTheme("dark");
+  renderSettings();
+  render();          // popup.js — refresh Today panel's entry list
+  renderDashboard();
+}
+
 function showPanel(name) {
   for (const panel of ["today", "dashboard", "settings"]) {
     document.getElementById("panel" + panel[0].toUpperCase() + panel.slice(1)).classList.toggle("hidden", panel !== name);
@@ -137,4 +167,27 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("navSettings").onclick = () => showPanel("settings");
   document.getElementById("weekPrev").onclick = () => { weekOffset--; renderDashboard(); };
   document.getElementById("weekNext").onclick = () => { weekOffset++; renderDashboard(); };
+
+  document.getElementById("dailyLimitSelect").onchange = (e) => {
+    S.dailyLimitHours = Number(e.target.value);
+    chrome.storage.local.set({ dailyLimitHours: S.dailyLimitHours });
+  };
+  document.getElementById("confirmDeleteToggle").onchange = (e) => {
+    S.confirmBeforeDelete = e.target.checked;
+    chrome.storage.local.set({ confirmBeforeDelete: S.confirmBeforeDelete });
+  };
+  document.getElementById("themeDark").onclick = () => applyTheme("dark");
+  document.getElementById("themeLight").onclick = () => applyTheme("light");
+  document.getElementById("themeSystem").onclick = () => applyTheme("system");
+  document.getElementById("resetEverything").onclick = resetEverything;
+  setupSearchSelect(
+    document.getElementById("settingsNameInput"),
+    document.getElementById("settingsNameList"),
+    () => S.names || []
+  );
+  document.getElementById("settingsNameInput").addEventListener("change", async () => {
+    S.name = document.getElementById("settingsNameInput").value;
+    await chrome.storage.local.set({ name: S.name });
+    route(); // refresh Today panel (popup.js)
+  });
 });

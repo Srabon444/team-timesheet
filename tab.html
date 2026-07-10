@@ -98,7 +98,53 @@
       </section>
 
       <section id="panelSettings" class="panel hidden">
-        <!-- filled in by Task 9 -->
+        <h1>Settings</h1>
+
+        <div class="settingsRow" style="display:block">
+          <label>Your name</label>
+          <div class="searchWrap">
+            <input id="settingsNameInput" type="text" autocomplete="off" placeholder="Type to search...">
+            <div id="settingsNameList" class="searchList hidden"></div>
+          </div>
+        </div>
+
+        <div class="settingsRow">
+          <div>
+            <div class="label">Daily limit</div>
+            <div class="desc">Get notified once when you cross this many hours in a day.</div>
+          </div>
+          <select id="dailyLimitSelect" style="width:auto">
+            <option value="4">4 hours</option>
+            <option value="6">6 hours</option>
+            <option value="8">8 hours</option>
+            <option value="10">10 hours</option>
+          </select>
+        </div>
+
+        <div class="settingsRow">
+          <div>
+            <div class="label">Confirm before deleting</div>
+            <div class="desc">Require a confirmation click before deleting a project entry.</div>
+          </div>
+          <input type="checkbox" id="confirmDeleteToggle">
+        </div>
+
+        <div class="settingsRow">
+          <div>
+            <div class="label">Theme</div>
+          </div>
+          <div>
+            <button class="btn" id="themeDark" style="width:auto">Dark</button>
+            <button class="btn" id="themeLight" style="width:auto">Light</button>
+            <button class="btn" id="themeSystem" style="width:auto">System</button>
+          </div>
+        </div>
+
+        <div class="dangerZone">
+          <div class="label">Reset everything</div>
+          <div class="desc">Deletes all tasks, history, and settings. Cannot be undone. Your name is kept.</div>
+          <button id="resetEverything" class="btn danger" style="width:auto">Reset</button>
+        </div>
       </section>
     </main>
   </div>
