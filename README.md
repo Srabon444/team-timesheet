@@ -88,6 +88,22 @@ one button at the end of the day to have it all typed in for you.
 On a new date, the previous day's entries and timers clear automatically;
 your name and last-used project/category stay as defaults.
 
+## Dashboard & Settings (tab view)
+
+Click **Open full view ⤢** in the popup (next to "change") to open a full
+browser tab with three sections, sharing live data with the popup:
+
+- **Today** — the same add-project/timer/Final Submit flow as the popup, just
+  in a wider layout.
+- **Dashboard** — a Mon–Sun weekly chart (browse past weeks with `<`/`>`),
+  stat tiles (today / all-time total / daily average / busiest day), and
+  time breakdowns by project and by work category. Past days are kept in a
+  history log so these stats survive the daily reset that otherwise clears
+  the working entry list.
+- **Settings** — change your name, set a daily hour limit (fires a one-time
+  OS notification when crossed), toggle confirm-before-delete, switch
+  Dark/Light/System theme, or reset everything (keeps your name).
+
 ## Files
 
 | File | Purpose |
@@ -97,3 +113,6 @@ your name and last-used project/category stay as defaults.
 | `popup.js` | All popup logic: storage, timers, UI, search comboboxes, and the form-filling automation |
 | `background.js` | Service worker — keeps the toolbar badge in sync with the running timer |
 | `icons/` | Extension icon |
+| `tab.html` / `tab.css` / `tab.js` | Full tab view: sidebar nav, Dashboard, Settings. Reuses `popup.js` verbatim for the Today section. |
+| `theme.css` | CSS custom properties (dark default, light override), consumed by both `popup.css` and `tab.css` |
+| `test/` | Node + jsdom regression suite (`npm test`) |
