@@ -415,8 +415,34 @@ async function ensureFormTab() {
     tab = await chrome.tabs.create({ url: FORM_URL + "?name=" + encodeURIComponent(S.name), active: true });
   }
   await waitTabComplete(tab.id);
-  await sleep(1200);
+  // A fixed sleep here used to guess how long the React app takes to
+  // actually become interactive after the tab reports "complete". Confirmed
+  // live: on a cold load (first visit, or cleared storage/cache) that can
+  // take 1.3s+, longer than any fixed guess reliably covers, while a warm
+  // reload is much faster — which is exactly why "first time doesn't work,
+  // reload it does" was happening. Poll for real readiness instead.
+  await waitForFormReady(tab.id);
   return tab.id;
+}
+// True once the Name field (placeholder or already-selected value) or the
+// Create button is actually present — covers both a fresh page (Name still
+// shows its placeholder) and a reused tab where Name was already selected.
+function pageFormReady() {
+  const hasNamePlaceholder = [...document.querySelectorAll(".react-select__placeholder")]
+    .some((e) => e.textContent.trim() === "Name" && e.offsetParent !== null);
+  const hasNameValue = document.querySelectorAll(".react-select__single-value").length > 0;
+  const hasCreate = [...document.querySelectorAll("button,[role=button],a,div,span")]
+    .some((n) => n.textContent.trim() === "Create" && n.children.length === 0 && n.offsetParent !== null);
+  return hasNamePlaceholder || hasNameValue || hasCreate;
+}
+async function waitForFormReady(tabId, timeout = 20000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId }, func: pageFormReady }).catch(() => [{}]);
+    if (res && res.result) return true;
+    await sleep(300);
+  }
+  return false;
 }
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
