@@ -28,8 +28,16 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .content { flex: 1; padding: 24px; max-width: 900px; }
 /* Today panel keeps the popup's comfortable form width, but centers it in
    the tab's much wider viewport instead of pinning it to the left edge
-   (which read as a stuck "mobile view" island on a real monitor). */
-.panel .wrap { padding: 0; max-width: 420px; margin: 0 auto; }
+   (which read as a stuck "mobile view" island on a real monitor). Widened
+   from the popup's 420px to fit the two-column layout below. */
+.panel .wrap { padding: 0; max-width: 760px; margin: 0 auto; }
+
+/* Tab-only: the add-project form sits on the left, today's tracked
+   projects on the right (inspired by the reference layout) — a wide-screen
+   improvement over stacking them, which the popup keeps doing since it
+   doesn't have the width to spare. */
+.todayCols { display: grid; grid-template-columns: 300px 1fr; gap: 28px; align-items: start; }
+.todayCols h2 { margin-top: 0; }
 
 /* The confirm modal's box is sized (width:100%) for the 340px popup — in a
    full browser tab that stretches edge to edge. Cap it here to a normal

@@ -46,25 +46,31 @@
               <button id="changeName" class="link">change</button>
             </div>
 
-            <h2>Add project</h2>
-            <div class="addform">
-              <label>Project</label>
-              <div class="searchWrap">
-                <input id="projSelect" type="text" autocomplete="off" placeholder="Type to search...">
-                <div id="projList" class="searchList hidden"></div>
+            <div class="todayCols">
+              <div class="addProjectCol">
+                <h2>Add project</h2>
+                <div class="addform">
+                  <label>Project</label>
+                  <div class="searchWrap">
+                    <input id="projSelect" type="text" autocomplete="off" placeholder="Type to search...">
+                    <div id="projList" class="searchList hidden"></div>
+                  </div>
+                  <label>Work Category</label>
+                  <select id="catSelect"></select>
+                  <label>Description <span class="req">*</span></label>
+                  <input id="descInput" type="text" placeholder="Task description">
+                  <button id="addProject" class="btn primary">+ Add Project</button>
+                  <button id="cancelEdit" class="btn hidden">Cancel</button>
+                  <p id="addStatus" class="status"></p>
+                </div>
               </div>
-              <label>Work Category</label>
-              <select id="catSelect"></select>
-              <label>Description <span class="req">*</span></label>
-              <input id="descInput" type="text" placeholder="Task description">
-              <button id="addProject" class="btn primary">+ Add Project</button>
-              <button id="cancelEdit" class="btn hidden">Cancel</button>
-              <p id="addStatus" class="status"></p>
-            </div>
 
-            <h2>Today's projects</h2>
-            <div id="entries" class="entries"></div>
-            <p id="emptyMsg" class="muted small">No projects yet.</p>
+              <div class="entriesCol">
+                <h2>Today's projects</h2>
+                <div id="entries" class="entries"></div>
+                <p id="emptyMsg" class="muted small">No projects yet.</p>
+              </div>
+            </div>
 
             <button id="finalSubmit" class="btn danger">Final Submit</button>
             <p id="submitStatus" class="status"></p>

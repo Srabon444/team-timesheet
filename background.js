@@ -64,7 +64,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.timer) syncBadge();
   if (changes.timer || changes.entries) checkDailyLimit();
 });
-chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === ALARM) running(); });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== ALARM) return;
+  running();
+  // A running timer crosses the limit without any storage write happening
+  // at that exact moment — re-check on every 1-minute tick too, so it's
+  // caught within a minute of actually crossing, not just next time
+  // something else (e.g. pausing) happens to touch storage.
+  checkDailyLimit();
+});
 chrome.runtime.onInstalled.addListener(() => { syncBadge(); checkDailyLimit(); });
 chrome.runtime.onStartup.addListener(() => { syncBadge(); checkDailyLimit(); });
 syncBadge(); // service worker (re)start while a timer was already running

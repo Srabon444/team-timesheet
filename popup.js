@@ -17,6 +17,26 @@ const CATEGORY_FALLBACK_COLOR = "#64748b"; // any category not in the map above
 function categoryColor(cat) {
   return CATEGORY_COLORS[cat] || CATEGORY_FALLBACK_COLOR;
 }
+// Project color coding — one distinct hue per project, spread across a
+// different part of the palette than the categories above so the two badge
+// kinds stay visually distinguishable sitting side by side.
+const PROJECT_COLORS = {
+  "Bookland ERP": "#ec4899",
+  "Builder Alliance": "#14b8a6",
+  "Dr Cool": "#06b6d4",
+  "Hydroflux": "#6366f1",
+  "NewERP": "#a855f7",
+  "Prowork": "#84cc16",
+  "Rina CRM": "#f97316",
+  "SME Taskhub": "#0ea5e9",
+  "VSB": "#d946ef",
+  "Worksite Mini ERP": "#10b981",
+  "ZuPOS": "#eab308",
+};
+const PROJECT_FALLBACK_COLOR = "#64748b"; // any project not in the map above
+function projectColor(project) {
+  return PROJECT_COLORS[project] || PROJECT_FALLBACK_COLOR;
+}
 
 var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
 let tick = null;
@@ -280,12 +300,13 @@ function render() {
     div.innerHTML = `
       <div class="row1">
         <div>
+          <span class="statusDot"></span>
           <span class="pname"></span>
           <span class="cat"></span>
           ${e.submitted ? '<span class="submittedBadge">Submitted</span>' : ""}
         </div>
         <div class="acts">
-          <button class="edit" title="Edit">Edit</button>
+          <button class="edit" title="Edit">✎</button>
           <button class="del" title="Delete">&times;</button>
         </div>
       </div>
@@ -295,7 +316,10 @@ function render() {
         <input class="time" type="text" value="${secToHHMM(elapsedSec(e))}">
         <span class="live">${active ? secToHHMMSS(elapsedSec(e)) : ""}</span>
       </div>`;
-    div.querySelector(".pname").textContent = e.project;
+    div.querySelector(".statusDot").style.background = active ? "var(--success)" : "var(--text-muted)";
+    const pnameEl = div.querySelector(".pname");
+    pnameEl.textContent = e.project;
+    pnameEl.style.background = projectColor(e.project);
     const catEl = div.querySelector(".cat");
     catEl.textContent = e.category;
     catEl.style.background = categoryColor(e.category);

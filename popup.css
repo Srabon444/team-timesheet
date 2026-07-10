@@ -62,8 +62,8 @@ select:focus, input:focus { outline: none; border-color: var(--accent); }
 .entry.active { border-color: var(--accent); }
 .entry .row1 { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
 .entry .row1 > div:first-child { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.entry .pname { font-weight: 600; }
-.entry .cat {
+.statusDot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.entry .pname, .entry .cat {
   font-size: 10px;
   font-weight: 600;
   color: #fff;
@@ -92,9 +92,14 @@ select:focus, input:focus { outline: none; border-color: var(--accent); }
 .entry .live { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--success); min-width: 70px; text-align: right; }
 .entry.active .live::before { content: "\25CF"; margin-right: 5px; animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0.15; } }
-.entry .acts { display: flex; align-items: center; gap: 10px; }
-.entry .edit { color: var(--accent-light); background: none; border: none; cursor: pointer; font-size: 12px; padding: 0; }
-.entry .del { color: var(--danger-light); background: none; border: none; cursor: pointer; font-size: 15px; }
+.entry .acts { display: flex; align-items: center; gap: 6px; }
+.entry .edit, .entry .del {
+  width: 26px; height: 26px; padding: 0;
+  border-radius: 6px; border: 1px solid var(--border-color);
+  background: var(--bg-page); cursor: pointer; font-size: 13px; line-height: 1;
+}
+.entry .edit { color: var(--accent-light); border-color: var(--accent-light); }
+.entry .del { color: var(--danger-light); border-color: var(--danger-light); font-size: 16px; }
 
 .overlay {
   position: fixed;

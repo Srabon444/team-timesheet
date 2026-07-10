@@ -258,6 +258,14 @@ async function harness1() {
   A(win.categoryColor("Development") === win.categoryColor("Development"), "same category is always the same color");
   A(!!win.categoryColor("Some Unknown Category"), "an unrecognized category still gets a fallback color, not blank/undefined");
 
+  // PROJECT COLOR CODING: same treatment as category, on the project badge.
+  const pnameEl = win.document.querySelector(".entry .pname");
+  A(pnameEl && pnameEl.style.background, "project badge has a background color set");
+  A(win.projectColor("ZuPOS") !== win.projectColor("VSB"), "different projects get different colors");
+  A(win.projectColor("ZuPOS") === win.projectColor("ZuPOS"), "same project is always the same color");
+  A(win.projectColor("ZuPOS") !== win.categoryColor("Development"), "project and category palettes don't collide on this pair");
+  A(!!win.projectColor("Some Unknown Project"), "an unrecognized project still gets a fallback color, not blank/undefined");
+
   // DRAFT persistence across popup reopen (half-filled, not added)
   $("descInput").value = "half typed";
   $("descInput").dispatchEvent(new win.Event("input"));
@@ -679,6 +687,17 @@ async function harness3() {
   fireChange({ entries: [{ id: "e1", project: "ZuPOS", accSec: 4000 }] });
   await sleep(20);
   A(notifications.length === 2, "notification can fire again on a new day");
+
+  // A timer left silently RUNNING can cross the limit with no storage write
+  // happening at that exact moment — the 1-minute alarm tick must catch it
+  // too, not just storage.onChanged.
+  store.date = "2026-07-12";
+  store.warnedDate = null;
+  store.entries = [{ id: "e1", project: "ZuPOS", accSec: 0 }];
+  store.timer = { activeId: "e1", startedAt: Date.now() - 61 * 60 * 1000 }; // running 61 min, no accSec yet
+  listeners.alarm.forEach((f) => f({ name: "tick" }));
+  await sleep(20);
+  A(notifications.length === 3, "alarm tick alone catches a live-running timer crossing the limit, without any storage.onChanged firing");
 }
 
 // ============================================================
