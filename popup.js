@@ -409,10 +409,12 @@ async function finalSubmit() {
 async function ensureFormTab() {
   const existing = await chrome.tabs.query({ url: FORM_URL + "*" });
   let tab = existing[0];
+  let isNewTab = false;
   if (tab) {
     await chrome.tabs.update(tab.id, { active: true });
   } else {
     tab = await chrome.tabs.create({ url: FORM_URL + "?name=" + encodeURIComponent(S.name), active: true });
+    isNewTab = true;
   }
   await waitTabComplete(tab.id);
   // A fixed sleep here used to guess how long the React app takes to
@@ -422,6 +424,17 @@ async function ensureFormTab() {
   // reload is much faster — which is exactly why "first time doesn't work,
   // reload it does" was happening. Poll for real readiness instead.
   await waitForFormReady(tab.id);
+  if (isNewTab) {
+    // Belt-and-suspenders per user report: even with the readiness poll
+    // above, a brand-new cold tab can still be subtly half-hydrated. One
+    // reload (now hitting a warm cache) plus re-waiting reproduces exactly
+    // the "reload fixed it" workaround automatically. Skipped for a REUSED
+    // tab — that may hold in-progress session-only entries a reload would
+    // wipe (Fillout entries aren't persisted until the real Submit).
+    await chrome.tabs.reload(tab.id);
+    await waitTabComplete(tab.id);
+    await waitForFormReady(tab.id);
+  }
   return tab.id;
 }
 // True once the Name field (placeholder or already-selected value) or the
