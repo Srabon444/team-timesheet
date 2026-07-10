@@ -322,6 +322,23 @@ async function harness1() {
   A(win.document.documentElement.dataset.theme === "light", "applyTheme sets data-theme on the document");
   A(store.theme === "light", "applyTheme persists the choice to storage");
 
+  // OPEN FULL VIEW: opens tab.html, or focuses it if already open
+  let openedTabUrl = null;
+  let focusedTabId = null;
+  win.chrome.tabs.query = async ({ url }) => (url && url.includes("tab.html") ? [] : []);
+  win.chrome.tabs.create = async (opts) => { openedTabUrl = opts.url; return { id: 2 }; };
+  win.chrome.runtime = { getURL: (p) => "chrome-extension://fake-id/" + p };
+  $("openFullView").click();
+  await sleep(20);
+  A(openedTabUrl === "chrome-extension://fake-id/tab.html", "Open full view creates a tab.html tab when none is open");
+
+  win.chrome.tabs.query = async ({ url }) => (url && url.includes("tab.html") ? [{ id: 7 }] : []);
+  win.chrome.tabs.update = async (id, opts) => { focusedTabId = id; };
+  openedTabUrl = null;
+  $("openFullView").click();
+  await sleep(20);
+  A(openedTabUrl === null && focusedTabId === 7, "Open full view focuses an already-open tab.html tab instead of opening a second one");
+
   dom.window.close();
 }
 

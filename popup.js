@@ -466,6 +466,16 @@ async function ensureFormTab() {
   }
   return tab.id;
 }
+
+async function openFullView() {
+  const url = chrome.runtime.getURL("tab.html");
+  const existing = await chrome.tabs.query({ url: url + "*" });
+  if (existing[0]) {
+    await chrome.tabs.update(existing[0].id, { active: true });
+  } else {
+    await chrome.tabs.create({ url, active: true });
+  }
+}
 // True once the Name field (placeholder or already-selected value) or the
 // Create button is actually present — covers both a fresh page (Name still
 // shows its placeholder) and a reused tab where Name was already selected.
@@ -693,6 +703,7 @@ async function fillFormOnPage(tabId, entries, name) {
 document.addEventListener("DOMContentLoaded", () => {
   $("loadNames").onclick = loadNames;
   $("saveName").onclick = saveName;
+  if ($("openFullView")) $("openFullView").onclick = openFullView;
   $("changeName").onclick = showSetup;
   $("addProject").onclick = submitDraft;
   $("cancelEdit").onclick = clearDraft;
