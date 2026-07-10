@@ -1237,7 +1237,34 @@ select:focus, input:focus { outline: none; border-color: var(--accent); }
 .searchItem.hi, .searchItem:hover { background: var(--bg-surface-2); }
 ```
 
-- [ ] **Step 4: Add `resolveTheme`/`applyTheme` to `popup.js` and call from `init()`**
+- [ ] **Step 4: Add the failing assertions to `test/smoke.js`**
+
+Insert into `harness1`, right before the final `dom.window.close();`:
+
+```javascript
+  // THEME: resolveTheme + applyTheme + data-theme attribute reflects on load
+  A(win.resolveTheme("dark") === "dark" && win.resolveTheme("light") === "light", "resolveTheme passes through explicit dark/light");
+  A(win.resolveTheme("system") === "dark" || win.resolveTheme("system") === "light", "resolveTheme resolves system to a concrete value");
+  win.applyTheme("light");
+  await sleep(10);
+  A(win.document.documentElement.dataset.theme === "light", "applyTheme sets data-theme on the document");
+  A(store.theme === "light", "applyTheme persists the choice to storage");
+```
+
+Also add a `matchMedia` stub to harness1's JSDOM setup, right after the existing `win.chrome = chrome;` line (jsdom doesn't implement `matchMedia`, and `resolveTheme("system")` needs it):
+
+```javascript
+  win.matchMedia = win.matchMedia || (() => ({ matches: false }));
+```
+
+- [ ] **Step 5: Run the suite and confirm these new assertions fail**
+
+```bash
+cd /home/ashraful/Personal/connect-team-form-fillup && npm test
+```
+Expected: FAIL — `win.resolveTheme`/`win.applyTheme` are not functions yet.
+
+- [ ] **Step 6: Add `resolveTheme`/`applyTheme` to `popup.js` and call from `init()`**
 
 Add these two functions near the top of `popup.js`, right after the `hhmmToSec` function (before the `// ---------- storage / state ----------` comment):
 
@@ -1269,35 +1296,14 @@ and, right before the closing `route();` line of `init()`, add:
 
 (Note: this sets the attribute directly rather than calling `applyTheme` here, since `applyTheme` also re-persists to storage — on load we only need to *read* the stored value and reflect it, not write it back.)
 
-- [ ] **Step 2: Add the failing assertions to `test/smoke.js`**
-
-Insert into `harness1`, right before the final `dom.window.close();`:
-
-```javascript
-  // THEME: resolveTheme + applyTheme + data-theme attribute reflects on load
-  A(win.resolveTheme("dark") === "dark" && win.resolveTheme("light") === "light", "resolveTheme passes through explicit dark/light");
-  A(win.resolveTheme("system") === "dark" || win.resolveTheme("system") === "light", "resolveTheme resolves system to a concrete value");
-  win.applyTheme("light");
-  await sleep(10);
-  A(win.document.documentElement.dataset.theme === "light", "applyTheme sets data-theme on the document");
-  A(store.theme === "light", "applyTheme persists the choice to storage");
-```
-
-- [ ] **Step 3: Run the suite and confirm these new assertions fail**
+- [ ] **Step 7: Run the suite and confirm everything passes**
 
 ```bash
 cd /home/ashraful/Personal/connect-team-form-fillup && npm test
 ```
-Expected: FAIL — `win.resolveTheme`/`win.applyTheme` are not functions yet.
+Expected: `SMOKE: ALL PASS`.
 
-- [ ] **Step 5: Run the suite and confirm everything passes**
-
-```bash
-cd /home/ashraful/Personal/connect-team-form-fillup && npm test
-```
-Expected: `SMOKE: ALL PASS`. (jsdom implements `matchMedia`? If step 5 fails with `matchMedia is not a function`, add `win.matchMedia = win.matchMedia || (() => ({ matches: false }));` to the harness1 JSDOM setup, right after `win.chrome = chrome;`, then re-run.)
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd /home/ashraful/Personal/connect-team-form-fillup
