@@ -515,18 +515,30 @@ async function ensureFormTab() {
   // reload is much faster — which is exactly why "first time doesn't work,
   // reload it does" was happening. Poll for real readiness instead.
   await waitForFormReady(tab.id);
-  if (isNewTab) {
-    // Belt-and-suspenders per user report: even with the readiness poll
-    // above, a brand-new cold tab can still be subtly half-hydrated. One
-    // reload (now hitting a warm cache) plus re-waiting reproduces exactly
-    // the "reload fixed it" workaround automatically. Skipped for a REUSED
-    // tab — that may hold in-progress session-only entries a reload would
-    // wipe (Fillout entries aren't persisted until the real Submit).
+  // Belt-and-suspenders per user report: even with the readiness poll above,
+  // a tab can still be subtly half-hydrated. One reload (hitting a warm
+  // cache) plus re-waiting reproduces the "reload fixed it" workaround
+  // automatically. Always safe for a brand-new tab. For a REUSED tab, only
+  // reload if it's not already holding in-progress session-only entries —
+  // those aren't persisted until the real Submit, so reloading would wipe
+  // them.
+  let safeToReload = isNewTab;
+  if (!isNewTab) {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pageHasExistingEntries }).catch(() => [{}]);
+    safeToReload = res && res.result === false;
+  }
+  if (safeToReload) {
     await chrome.tabs.reload(tab.id);
     await waitTabComplete(tab.id);
     await waitForFormReady(tab.id);
   }
   return tab.id;
+}
+// True once at least one entry has already been added to the "Timesheet
+// Entries" list this session — used to decide whether reloading a reused
+// tab is safe (it would silently discard any of these).
+function pageHasExistingEntries() {
+  return document.body.innerText.includes("Completed");
 }
 
 async function openFullView() {

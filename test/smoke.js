@@ -21,6 +21,7 @@ async function harness1() {
   let lastFill = null;
   let reloadCount = 0;
   let queryReturnsExisting = false;
+  let hasExistingEntries = false; // controls pageHasExistingEntries's mocked result
   const chrome = {
     storage: { local: {
       get: async (k) => (k === null ? { ...store } : {}),
@@ -33,7 +34,13 @@ async function harness1() {
       query: async () => (queryReturnsExisting ? [{ id: 1, status: "complete" }] : []),
       reload: async () => { reloadCount++; },
     },
-    scripting: { executeScript: async () => [{ result: {} }] }, // fillFormOnPage is stubbed below; harness2 covers real cross-frame automation
+    // fillFormOnPage is stubbed below; harness2 covers real cross-frame automation.
+    // pageHasExistingEntries is real code under test here (ensureFormTab's
+    // reused-tab reload-safety check), so route it to a controllable flag.
+    scripting: { executeScript: async ({ func }) => {
+      if (func && func.name === "pageHasExistingEntries") return [{ result: hasExistingEntries }];
+      return [{ result: {} }];
+    } },
   };
 
   const realForm = fs.readFileSync(path.join(ROOT, "test", "fixtures", "form.html"), "utf8");
@@ -201,10 +208,14 @@ async function harness1() {
 
   // Add ONE new entry -> only that new entry should be sent next time, not
   // the two already-submitted ones. Also re-verifies the reused-tab reload
-  // skip (that could hold in-progress session-only entries — Fillout
-  // doesn't persist them until the real Submit).
+  // is now CONDITIONAL: skipped when the live page already shows existing
+  // entries (would wipe in-progress session-only work — Fillout doesn't
+  // persist them until the real Submit), but allowed when it doesn't
+  // (fixes the same hydration flakiness a brand-new tab gets, for a reused
+  // tab that's just sitting idle with nothing to lose).
   reloadCount = 0;
   queryReturnsExisting = true;
+  hasExistingEntries = true;
   $("projSelect").value = "Hydroflux";
   $("descInput").value = "Third task";
   $("addProject").click();
@@ -222,8 +233,29 @@ async function harness1() {
   $("confirmYes").click();
   await sleep(300);
   A(Array.isArray(lastFill) && lastFill.length === 1 && lastFill[0].description === "Third task", "second Final Submit re-sends only the NEW entry — no duplicates of the first two");
-  A(reloadCount === 0, `ensureFormTab does NOT reload a reused/existing tab (got ${reloadCount})`);
+  A(reloadCount === 0, `reused tab with existing entries on the live page is NOT reloaded (got ${reloadCount})`);
+
+  // Same reused-tab scenario, but the live page has nothing on it yet ->
+  // safe to reload for the hydration-flakiness fix.
+  reloadCount = 0;
+  hasExistingEntries = false;
+  $("projSelect").value = "ZuPOS";
+  $("descInput").value = "Fourth task";
+  $("addProject").click();
+  await sleep(20);
+  const entryTimes2 = win.document.querySelectorAll(".entry .time");
+  const fourthTimeInp = entryTimes2[entryTimes2.length - 1];
+  fourthTimeInp.value = "00:30";
+  fourthTimeInp.dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  fillFormReturn = { added: 1 };
+  $("finalSubmit").click();
+  await sleep(30);
+  $("confirmYes").click();
+  await sleep(300);
+  A(reloadCount === 1, `reused tab with NO existing entries on the live page IS reloaded (got ${reloadCount})`);
   queryReturnsExisting = false;
+  hasExistingEntries = false;
 
   // delete an entry
   const countBeforeDelete = store.entries.length;
