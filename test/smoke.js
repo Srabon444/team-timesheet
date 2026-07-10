@@ -235,6 +235,46 @@ async function harness1() {
   A(!store.draft, "daily reset clears draft");
   A($("descInput").value === "", "add-form cleared after daily reset");
 
+  // HISTORY ARCHIVING: add an entry on the "old" day, then roll the date
+  // forward and confirm it got archived under the outgoing date, not lost.
+  $("projSelect").value = "ZuPOS";
+  $("catSelect").value = "Development";
+  $("descInput").value = "Archived task";
+  $("addProject").click();
+  await sleep(20);
+  const archivedTimeInp = win.document.querySelector(".entry .time");
+  archivedTimeInp.value = "01:00";
+  archivedTimeInp.dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  const outgoingDate = store.date;
+  const realTodayStr = win.todayStr;
+  win.todayStr = () => "2099-01-01"; // simulate a later calendar day arriving, without corrupting the stored date
+  await win.init();
+  win.todayStr = realTodayStr;
+  await sleep(30);
+  A(store.history && Array.isArray(store.history[outgoingDate]), `history archived under the outgoing date (${outgoingDate})`);
+  A(store.history[outgoingDate][0].description === "Archived task" && store.history[outgoingDate][0].accSec === 3600, "archived entry keeps its description and folded time");
+  A(store.entries.length === 0, "entries still clear on rollover after archiving");
+  A(store.date === "2099-01-01", "date advances to the new day");
+
+  // first-ever run (no prior S.date at all) must NOT write a bogus history entry
+  const store2 = {};
+  const chrome2 = { storage: { local: {
+    get: async (k) => (k === null ? { ...store2 } : {}),
+    set: async (obj) => { Object.assign(store2, obj); },
+  } } };
+  const dom2 = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  dom2.window.chrome = chrome2;
+  dom2.window.fetch = async () => ({ text: async () => realForm });
+  dom2.window.crypto = { randomUUID: () => "id-first" };
+  const s2 = dom2.window.document.createElement("script");
+  s2.textContent = jsSrc;
+  dom2.window.document.body.appendChild(s2);
+  dom2.window.document.dispatchEvent(new dom2.window.Event("DOMContentLoaded"));
+  await sleep(50);
+  A(store2.history && Object.keys(store2.history).length === 0, "first-ever run does not archive a bogus history entry");
+  dom2.window.close();
+
   $("finalSubmit").click();
   await sleep(20);
   A($("submitStatus").textContent.toLowerCase().includes("no projects"), "blocks submit with no entries");

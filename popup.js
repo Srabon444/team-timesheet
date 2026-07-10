@@ -38,14 +38,21 @@ async function init() {
   S = await chrome.storage.local.get(null);
   S.entries = S.entries || [];
   S.timer = S.timer || { activeId: null, startedAt: null };
+  S.history = S.history || {};
   const today = todayStr();
   if (S.date !== today) {
+    // Archive the outgoing day's entries before clearing them — skip on the
+    // very first run ever (no S.date yet) so we don't write a bogus entry.
+    if (S.date && S.entries.length) {
+      foldActive(); // fold any running timer into accSec before archiving
+      S.history[S.date] = S.entries;
+    }
     // daily reset: clear projects + timer + draft, keep name/names/lastCategory
     S.entries = [];
     S.timer = { activeId: null, startedAt: null };
     S.draft = null;
     S.date = today;
-    await chrome.storage.local.set({ entries: [], timer: S.timer, draft: null, date: today });
+    await chrome.storage.local.set({ history: S.history, entries: [], timer: S.timer, draft: null, date: today });
   }
   route();
 }
