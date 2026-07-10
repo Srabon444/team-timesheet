@@ -506,22 +506,19 @@ async function ensureFormTab() {
     tab = await chrome.tabs.create({ url: FORM_URL + "?name=" + encodeURIComponent(S.name), active: true });
   }
   await waitTabComplete(tab.id);
-  // A fixed sleep here used to guess how long the React app takes to
-  // actually become interactive after the tab reports "complete". Confirmed
-  // live: on a cold load (first visit, or cleared storage/cache) that can
-  // take 1.3s+, longer than any fixed guess reliably covers, while a warm
-  // reload is much faster — which is exactly why "first time doesn't work,
-  // reload it does" was happening. Poll for real readiness instead.
-  await waitForFormReady(tab.id);
-  // Belt-and-suspenders per user report: even with the readiness poll above,
-  // a tab can still be subtly half-hydrated. Always reload once fully loaded
-  // (hitting a warm cache) and re-wait before starting automation — the user
-  // explicitly wants this every time, on a new tab or a reused one, even
-  // though it means any in-progress session-only entries already on a
-  // reused tab get discarded (Fillout doesn't persist entries until the
-  // real Submit).
+  // Reload immediately once the tab has at least finished its initial
+  // navigation — before any readiness polling, before Name selection,
+  // before anything else — so the reload is the first visible thing that
+  // happens and is obviously a fresh load, not a late/invisible one buried
+  // after a wait. Always reloads, new tab or reused, even though this means
+  // any in-progress session-only entries already on a reused tab get
+  // discarded (Fillout doesn't persist entries until the real Submit).
   await chrome.tabs.reload(tab.id);
   await waitTabComplete(tab.id);
+  // A fixed sleep here used to guess how long the React app takes to
+  // actually become interactive after the tab reports "complete". Confirmed
+  // live: on a cold load that can take 1.3s+, longer than any fixed guess
+  // reliably covers. Poll for real readiness instead.
   await waitForFormReady(tab.id);
   return tab.id;
 }
