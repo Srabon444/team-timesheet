@@ -196,6 +196,8 @@ async function harness1() {
   // delete an entry
   win.document.querySelector(".entry .del").click();
   await sleep(20);
+  $("confirmYes").click();
+  await sleep(20);
   A(store.entries.length === 1, "delete removes entry");
 
   // EDIT an existing entry
@@ -278,6 +280,38 @@ async function harness1() {
   $("finalSubmit").click();
   await sleep(20);
   A($("submitStatus").textContent.toLowerCase().includes("no projects"), "blocks submit with no entries");
+
+  // CONFIRM-BEFORE-DELETE: default true -> delete must go through the modal
+  $("projSelect").value = "ZuPOS";
+  $("descInput").value = "Delete-confirm test";
+  $("addProject").click();
+  await sleep(20);
+  const beforeCount = store.entries.length;
+  win.document.querySelector(".entry .del").click();
+  await sleep(20);
+  A(!$("confirmOverlay").classList.contains("hidden"), "delete with confirmBeforeDelete on shows the modal");
+  A(store.entries.length === beforeCount, "entry not yet deleted while modal is open");
+  $("confirmNo").click();
+  await sleep(20);
+  A(store.entries.length === beforeCount, "Cancel in delete modal keeps the entry");
+  win.document.querySelector(".entry .del").click();
+  await sleep(20);
+  $("confirmYes").click();
+  await sleep(20);
+  A(store.entries.length === beforeCount - 1, "Yes in delete modal removes the entry");
+
+  // confirmBeforeDelete: false -> deletes immediately, no modal
+  store.confirmBeforeDelete = false;
+  win.S.confirmBeforeDelete = false;
+  $("projSelect").value = "ZuPOS";
+  $("descInput").value = "No-confirm delete test";
+  $("addProject").click();
+  await sleep(20);
+  const beforeCount2 = store.entries.length;
+  win.document.querySelector(".entry .del").click();
+  await sleep(20);
+  A($("confirmOverlay").classList.contains("hidden"), "delete with confirmBeforeDelete off skips the modal");
+  A(store.entries.length === beforeCount2 - 1, "entry deleted immediately when confirmBeforeDelete is off");
 
   dom.window.close();
 }

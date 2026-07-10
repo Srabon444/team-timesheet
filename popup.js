@@ -6,7 +6,7 @@ const PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "N
 const CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
 
-let S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
+var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
 let tick = null;
 
 // ---------- utils ----------
@@ -39,6 +39,7 @@ async function init() {
   S.entries = S.entries || [];
   S.timer = S.timer || { activeId: null, startedAt: null };
   S.history = S.history || {};
+  S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
   const today = todayStr();
   if (S.date !== today) {
     // Archive the outgoing day's entries before clearing them — skip on the
@@ -271,6 +272,9 @@ function render() {
   startTick();
 }
 async function deleteEntry(id) {
+  if (S.confirmBeforeDelete !== false) {
+    if (!(await showConfirm("Delete this project entry?"))) return;
+  }
   if (S.timer.activeId === id) S.timer = { activeId: null, startedAt: null };
   S.entries = S.entries.filter((x) => x.id !== id);
   await persist();
