@@ -1,0 +1,12 @@
+{
+  "name": "connect-team-form-fillup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Daily Timesheet Auto-Filler — Chrome extension",
+  "scripts": {
+    "test": "node test/smoke.js"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
+}

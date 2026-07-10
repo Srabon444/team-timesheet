@@ -1,0 +1,567 @@
+const fs = require("fs");
+const path = require("path");
+const { JSDOM } = require("jsdom");
+
+const ROOT = path.join(__dirname, "..");
+const html = fs.readFileSync(path.join(ROOT, "popup.html"), "utf8");
+const jsSrc = fs.readFileSync(path.join(ROOT, "popup.js"), "utf8");
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let fails = 0;
+const A = (c, m) => { if (!c) { console.error("  FAIL:", m); fails++; } else console.log("  ok:", m); };
+
+const MOCK_NAMES = ["Ashis Hira", "Prithy Raj Nag", "Debjit Paul"];
+
+// ============================================================
+// HARNESS 1 — popup.js driven through mocked chrome + DOM
+// ============================================================
+async function harness1() {
+  console.log("\n== Harness 1: popup UI + storage + orchestration ==");
+  const store = {};
+  let lastFill = null;
+  let reloadCount = 0;
+  let queryReturnsExisting = false;
+  const chrome = {
+    storage: { local: {
+      get: async (k) => (k === null ? { ...store } : {}),
+      set: async (obj) => { Object.assign(store, obj); },
+    }},
+    tabs: {
+      create: async () => ({ id: 1, status: "complete" }),
+      get: async () => ({ id: 1, status: "complete" }),
+      update: async () => {}, remove: async () => {},
+      query: async () => (queryReturnsExisting ? [{ id: 1, status: "complete" }] : []),
+      reload: async () => { reloadCount++; },
+    },
+    scripting: { executeScript: async () => [{ result: {} }] }, // fillFormOnPage is stubbed below; harness2 covers real cross-frame automation
+  };
+
+  const realForm = fs.readFileSync(path.join(ROOT, "test", "fixtures", "form.html"), "utf8");
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = chrome;
+  win.fetch = async () => ({ text: async () => realForm });
+  let uid = 0;
+  win.crypto = { randomUUID: () => "id-" + uid++ };
+  const s = win.document.createElement("script");
+  s.textContent = jsSrc;
+  win.document.body.appendChild(s);
+  win.document.dispatchEvent(new win.Event("DOMContentLoaded"));
+  await sleep(50);
+  // finalSubmit()'s own logic (validation/confirm/status) is this harness's
+  // concern; the real cross-frame page automation is exercised in harness2.
+  let fillFormReturn = { added: 0 };
+  win.fillFormOnPage = async (tabId, entries, name) => { lastFill = entries; return fillFormReturn; };
+  const $ = (id) => win.document.getElementById(id);
+  const vis = (id) => !$(id).classList.contains("hidden");
+
+  A(vis("setup") && !vis("main"), "first run shows setup view");
+
+  $("loadNames").click();
+  await sleep(80);
+  A(store.names && store.names.length === 21, "21 names parsed from real form HTML");
+  A(store.names.includes("Debjit Paul"), "names persisted incl. Debjit Paul");
+  A(JSON.stringify(store.names) === JSON.stringify([...store.names].sort((a, b) => a.localeCompare(b))), "names sorted alphabetically");
+
+  // searchable name combobox: substring match (not just first-letter jump
+  // like a native <select>), click-to-select, and Enter-to-select
+  $("nameSelect").dispatchEvent(new win.Event("focus"));
+  await sleep(10);
+  A(win.document.querySelectorAll("#nameList .searchItem").length === 21, "focusing an empty search shows all 21 names");
+  $("nameSelect").value = "raful"; // mid-word substring of "Ashraful" -- not a prefix
+  $("nameSelect").dispatchEvent(new win.Event("input"));
+  await sleep(10);
+  const midMatches = [...win.document.querySelectorAll("#nameList .searchItem")].map((n) => n.textContent);
+  A(midMatches.some((t) => t.includes("Ashraful")), "typing a mid-word substring finds a match (not just first-letter)");
+  A(midMatches.length < 21, "substring search actually filters the list down");
+  $("nameSelect").value = "ebjit"; // mid-word of "Debjit"
+  $("nameSelect").dispatchEvent(new win.Event("input"));
+  await sleep(10);
+  const row = [...win.document.querySelectorAll("#nameList .searchItem")].find((n) => n.textContent === "Debjit Paul");
+  A(!!row, "substring search finds Debjit Paul via mid-word text");
+  row.dispatchEvent(new win.Event("mousedown"));
+  await sleep(10);
+  A($("nameSelect").value === "Debjit Paul", "clicking a search result selects it");
+  A(win.document.getElementById("nameList").classList.contains("hidden"), "list closes after selection");
+
+  $("saveName").click();
+  await sleep(30);
+  A(store.name === "Debjit Paul", "name saved to storage");
+  A(vis("main") && !vis("setup"), "main view shown after save");
+  A($("whoDate").textContent === store.date && !!store.date, "today's date shown");
+
+  // project searchable combobox: same substring behavior, plus Enter-to-select
+  $("projSelect").dispatchEvent(new win.Event("focus"));
+  await sleep(10);
+  const projAll = [...win.document.querySelectorAll("#projList .searchItem")].map((n) => n.textContent);
+  A(projAll.length === 11, "focusing project search with no filter shows all 11 projects");
+  A(JSON.stringify(projAll) === JSON.stringify([...projAll].sort((a, b) => a.localeCompare(b))), "projects list rendered alphabetically sorted");
+  $("projSelect").value = "uPO"; // mid-word substring of ZuPOS
+  $("projSelect").dispatchEvent(new win.Event("input"));
+  await sleep(10);
+  const projMatches = [...win.document.querySelectorAll("#projList .searchItem")].map((n) => n.textContent);
+  A(projMatches.length === 1 && projMatches[0] === "ZuPOS", "project mid-word substring search finds ZuPOS");
+  $("projSelect").dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await sleep(10);
+  A($("projSelect").value === "ZuPOS", "pressing Enter selects the (only) filtered match");
+  A(win.document.getElementById("projList").classList.contains("hidden"), "project list closes after Enter-select");
+  $("projSelect").value = "ZuPOS"; // restore for the rest of the test flow below
+
+  $("descInput").value = "   ";
+  $("addProject").click();
+  await sleep(20);
+  A(store.entries === undefined || (store.entries || []).length === 0, "empty description blocked");
+  A($("addStatus").textContent.toLowerCase().includes("required"), "shows required error");
+
+  $("projSelect").value = "ZuPOS";
+  $("catSelect").value = "Development";
+  $("descInput").value = "Build feature X";
+  $("addProject").click();
+  await sleep(20);
+  A(store.entries.length === 1 && store.entries[0].project === "ZuPOS", "project A added");
+  A(store.lastCategory === "Development", "lastCategory persisted");
+  A(store.lastProject === "ZuPOS", "lastProject persisted");
+  A(win.document.querySelectorAll(".entry").length === 1, "one entry rendered");
+
+  // Project select must NOT reset to the first option for the next add —
+  // it should still show the just-used project until the user changes it.
+  A($("projSelect").value === "ZuPOS", "project select carries over ZuPOS as default for next add (not reset)");
+
+  $("projSelect").value = "VSB"; // user changes it
+  $("descInput").value = "Fix bug";
+  $("addProject").click();
+  await sleep(20);
+  A(store.entries.length === 2, "project B added");
+  A(store.lastProject === "VSB", "changing project persists the new choice");
+  A($("projSelect").value === "VSB", "project select now defaults to the changed value");
+
+  const btnA = win.document.querySelectorAll(".entry")[0].querySelector(".tbtn");
+  btnA.click();
+  await sleep(20);
+  A(store.timer.activeId === store.entries[0].id, "timer A active");
+  const btnB = win.document.querySelectorAll(".entry")[1].querySelector(".tbtn");
+  btnB.click();
+  await sleep(20);
+  A(store.timer.activeId === store.entries[1].id, "switching to B makes B active");
+  A(store.entries.filter((e) => store.timer.activeId === e.id).length === 1, "only one active timer");
+
+  win.document.querySelectorAll(".entry")[1].querySelector(".tbtn").click();
+  await sleep(20);
+  A(store.timer.activeId === null, "pause clears active timer");
+
+  const timeInp = win.document.querySelectorAll(".entry")[0].querySelector(".time");
+  timeInp.value = "02:30";
+  timeInp.dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  A(store.entries[0].accSec === 9000, "manual time edit -> 2:30 = 9000s");
+
+  // custom in-popup confirm modal (not native window.confirm — that renders
+  // cropped/unusable inside a small extension popup)
+  lastFill = null;
+  $("finalSubmit").click();
+  await sleep(30);
+  A(!$("confirmOverlay").classList.contains("hidden"), "custom confirm modal shown (no native confirm())");
+  A($("confirmMsg").textContent.includes("Submit 2 project"), "modal message summarizes the submission");
+  A($("confirmMsg").textContent.length < 400, "modal message is a reasonable length (won't overflow)");
+  $("confirmNo").click();
+  await sleep(30);
+  A(lastFill === null, "Cancel in modal -> no form fill");
+  A($("confirmOverlay").classList.contains("hidden"), "modal hides after Cancel");
+
+  fillFormReturn = { added: 2 };
+  $("finalSubmit").click();
+  await sleep(30);
+  $("confirmYes").click();
+  await sleep(300);
+  A(Array.isArray(lastFill) && lastFill.length === 2, "final submit sends 2 entries");
+  A(lastFill[0].hhmm === "02:30" && lastFill[1].hhmm === "00:00", "payload carries hh:mm per entry");
+  A($("submitStatus").textContent.toLowerCase().includes("added"), "success status shown");
+  A($("confirmOverlay").classList.contains("hidden"), "modal hides after Yes");
+  // regression guard: user reported cold-start failures fixed by manually
+  // reloading; ensureFormTab now auto-reloads once for a brand-NEW tab...
+  A(reloadCount === 1, `ensureFormTab reloads once for a newly created tab (got ${reloadCount})`);
+
+  // ...but must NOT reload a REUSED tab — that could hold in-progress
+  // session-only entries (Fillout doesn't persist them until real Submit).
+  reloadCount = 0;
+  queryReturnsExisting = true;
+  lastFill = null;
+  $("finalSubmit").click();
+  await sleep(30);
+  $("confirmYes").click();
+  await sleep(300);
+  A(reloadCount === 0, `ensureFormTab does NOT reload a reused/existing tab (got ${reloadCount})`);
+  queryReturnsExisting = false;
+
+  // delete an entry
+  win.document.querySelector(".entry .del").click();
+  await sleep(20);
+  A(store.entries.length === 1, "delete removes entry");
+
+  // EDIT an existing entry
+  win.document.querySelector(".entry .edit").click();
+  await sleep(20);
+  A(store.draft && store.draft.editingId === store.entries[0].id, "Edit loads entry into draft");
+  A($("addProject").textContent === "Save changes", "add button becomes Save in edit mode");
+  A(vis("cancelEdit"), "cancel button visible in edit mode");
+  $("descInput").value = "Edited description";
+  $("descInput").dispatchEvent(new win.Event("input"));
+  await sleep(20);
+  A(store.draft.description === "Edited description", "edit draft persists description");
+  $("addProject").click();
+  await sleep(20);
+  A(store.entries[0].description === "Edited description", "save updates the entry");
+  A(store.draft === null, "draft cleared after save");
+  A($("addProject").textContent === "+ Add Project", "add button reverts after save");
+  A(!vis("cancelEdit"), "cancel button hidden after save");
+
+  // DRAFT persistence across popup reopen (half-filled, not added)
+  $("descInput").value = "half typed";
+  $("descInput").dispatchEvent(new win.Event("input"));
+  $("projSelect").value = "Hydroflux";
+  $("projSelect").dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  A(store.draft && store.draft.description === "half typed", "draft saved on input");
+  await win.init(); // simulate reopening the popup (re-reads storage)
+  await sleep(30);
+  A($("descInput").value === "half typed" && $("projSelect").value === "Hydroflux", "draft restored on reopen");
+
+  // daily reset
+  store.date = "2000-01-01";
+  await win.init();
+  await sleep(30);
+  A(store.entries.length === 0, "daily reset clears entries");
+  A(store.name === "Debjit Paul" && store.lastCategory === "Development", "reset keeps name + lastCategory");
+  A(!store.draft, "daily reset clears draft");
+  A($("descInput").value === "", "add-form cleared after daily reset");
+
+  $("finalSubmit").click();
+  await sleep(20);
+  A($("submitStatus").textContent.toLowerCase().includes("no projects"), "blocks submit with no entries");
+
+  dom.window.close();
+}
+
+// ============================================================
+// HARNESS 2 — fillFormOnPage cross-frame orchestration against a
+// react-select + real-iframe-shaped mock (matches the live Fillout DOM
+// confirmed via headless Chrome: Create opens a genuine subform <iframe>
+// with its own document, react-select controls use .react-select__control /
+// .react-select__placeholder / input[role=combobox] / .react-select__single-value).
+// ============================================================
+function buildReactSelectControl(doc, placeholder) {
+  const control = doc.createElement("div");
+  control.className = "react-select__control";
+  const ph = doc.createElement("div");
+  ph.className = "react-select__placeholder";
+  ph.textContent = placeholder;
+  const input = doc.createElement("input");
+  input.setAttribute("role", "combobox");
+  control.appendChild(ph);
+  control.appendChild(input);
+  let typed = "";
+  input.addEventListener("input", () => { typed = input.value; });
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    control.querySelector(".react-select__placeholder")?.remove();
+    control.querySelector(".react-select__single-value")?.remove();
+    const sv = doc.createElement("div");
+    sv.className = "react-select__single-value";
+    sv.textContent = typed;
+    control.appendChild(sv);
+  });
+  return control;
+}
+function runFuncInWindow(w, fn, args) {
+  const wrapped = new w.Function("args", `return (${fn.toString()}).apply(null, args);`);
+  return wrapped(args);
+}
+
+async function harness2() {
+  console.log("\n== Harness 2: fillFormOnPage cross-frame orchestration vs real-shaped mock ==");
+
+  const topDom = new JSDOM(`<body></body>`, { runScripts: "dangerously" });
+  const topWin = topDom.window;
+  const patchOffsetParent = (w) => {
+    Object.defineProperty(w.HTMLElement.prototype, "offsetParent", {
+      configurable: true,
+      get() { return this.isConnected && this.style.display !== "none" ? (this.parentNode || w.document.body) : null; },
+    });
+    // jsdom doesn't implement innerText (returns undefined) — pageEntryVisible
+    // (real popup.js code) relies on it, so shim it to textContent for the mock.
+    Object.defineProperty(w.HTMLElement.prototype, "innerText", {
+      configurable: true,
+      get() { return this.textContent; },
+    });
+  };
+  patchOffsetParent(topWin);
+
+  let subWin = null;      // set when "Create" opens the subform (mirrors the real <iframe>)
+  const filled = [];      // entries the mock subform Submit actually received
+  let mainSubmitClicked = false;
+  let createClicks = 0;
+
+  function buildSubWindow() {
+    const d = new JSDOM(`<body></body>`, { runScripts: "dangerously" });
+    patchOffsetParent(d.window);
+    const doc = d.window.document;
+    doc.body.appendChild(buildReactSelectControl(doc, "Select Project"));
+    doc.body.appendChild(buildReactSelectControl(doc, "Select Work Category"));
+    const desc = doc.createElement("input"); desc.placeholder = "Task Description"; doc.body.appendChild(desc);
+    const time = doc.createElement("input"); time.placeholder = "Hours Clocked (hh:mm)"; time.value = "00:00"; doc.body.appendChild(time);
+    const submit = doc.createElement("button"); submit.textContent = "Submit"; doc.body.appendChild(submit);
+    submit.addEventListener("click", () => {
+      filled.push({
+        project: doc.querySelectorAll(".react-select__single-value")[0]?.textContent,
+        category: doc.querySelectorAll(".react-select__single-value")[1]?.textContent,
+        description: desc.value,
+        time: time.value,
+      });
+      const descText = desc.value;
+      subWin = null; // subform closes -> back to main list, matches real Fillout behavior
+      // Mirrors the real Fillout race confirmed live: the entries list does its
+      // own async refresh after the modal closes, so the new entry's text only
+      // becomes visible a bit later — waitForEntryVisible must actually wait for it.
+      setTimeout(() => {
+        const p = topWin.document.createElement("div");
+        p.textContent = descText;
+        topWin.document.body.appendChild(p);
+      }, 150);
+    });
+    return d.window;
+  }
+
+  // top-page mock: Name react-select + Create + a decoy main-form Submit
+  // that must NEVER be clicked by the automation.
+  topWin.document.body.appendChild(buildReactSelectControl(topWin.document, "Name"));
+  const create = topWin.document.createElement("div");
+  create.textContent = "Create";
+  create.addEventListener("click", () => { createClicks++; subWin = buildSubWindow(); });
+  topWin.document.body.appendChild(create);
+  const mainSubmit = topWin.document.createElement("button"); // FORBIDDEN
+  mainSubmit.textContent = "Submit";
+  mainSubmit.addEventListener("click", () => { mainSubmitClicked = true; });
+  topWin.document.body.appendChild(mainSubmit);
+
+  // popup.js's own fillFormOnPage/waitForSubframe/waitForSubframeGone call
+  // chrome.scripting.executeScript — mock it to run the REAL extracted
+  // function source against whichever real document (top or sub) it targets,
+  // exactly mirroring Chrome's per-frame execution semantics.
+  const chrome = {
+    scripting: {
+      executeScript: async ({ target, func, args }) => {
+        args = args || [];
+        if (target.allFrames) {
+          const out = [{ frameId: 0, result: await runFuncInWindow(topWin, func, args) }];
+          if (subWin) out.push({ frameId: 99, result: await runFuncInWindow(subWin, func, args) });
+          return out;
+        }
+        if (target.frameIds) {
+          const w = target.frameIds[0] === 0 ? topWin : subWin;
+          return [{ frameId: target.frameIds[0], result: await runFuncInWindow(w, func, args) }];
+        }
+        return [{ frameId: 0, result: await runFuncInWindow(topWin, func, args) }];
+      },
+    },
+  };
+
+  // load the real popup.js so fillFormOnPage/pageSelectName/pageClickCreate/
+  // probeSubform/frameFillEntry are the actual shipped functions, unmodified.
+  const shellDom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  const shell = shellDom.window;
+  // init()/DOMContentLoaded wiring runs regardless — give it harmless stubs
+  // so it doesn't throw; this harness only exercises fillFormOnPage itself.
+  chrome.storage = { local: { get: async () => ({}), set: async () => {} } };
+  chrome.tabs = {
+    query: async () => [], create: async () => ({ id: 1, status: "complete" }),
+    get: async () => ({ status: "complete" }), update: async () => {},
+  };
+  shell.chrome = chrome;
+  shell.fetch = async () => ({ text: async () => "" });
+  const s = shell.document.createElement("script");
+  s.textContent = jsSrc;
+  shell.document.body.appendChild(s);
+  await sleep(20);
+
+  const entries = [
+    { project: "ZuPOS", category: "Development", description: "task one", hhmm: "02:30" },
+    { project: "VSB", category: "Code Review", description: "task two", hhmm: "01:15" },
+  ];
+  const raceStart = Date.now();
+  const r = await shell.fillFormOnPage(1, entries, "Debjit Paul");
+  const raceElapsed = Date.now() - raceStart;
+  if (r && r.error) console.log("  [debug] fillFormOnPage result:", JSON.stringify(r));
+  A(r && r.added === 2 && !r.error, "fillFormOnPage added 2 entries without error");
+  // regression guard for the reported "worked once, then Create silently did
+  // nothing on retry" bug: confirmed live that Fillout's entries list does an
+  // async refresh after the modal closes, so fillFormOnPage must wait for
+  // each entry's text to actually appear (mock delays it by 150ms) before
+  // clicking Create again — if this ever regresses to zero wait, this fails.
+  A(raceElapsed >= 300, `fillFormOnPage waited for the entries-list race (took ${raceElapsed}ms, expected >=300ms for 2 entries)`);
+  A(filled.length === 2, "real subform mock captured 2 submitted entries");
+  A(filled[0].project === "ZuPOS" && filled[0].category === "Development", "entry 1 project+category filled via type+Enter");
+  A(filled[0].description === "task one" && filled[0].time === "02:30", "entry 1 description+time filled");
+  A(filled[1].project === "VSB" && filled[1].time === "01:15", "entry 2 filled");
+  A(mainSubmitClicked === false, "main form Submit was NEVER clicked (frameFillEntry runs in a separate document)");
+  A(createClicks === 2, "Create clicked once per entry");
+  A(subWin === null, "subform closed after the final entry");
+
+  // second run in the same top window: Name already shows the correct value
+  // -> pageSelectName must skip re-selecting it (no flicker/reselect).
+  const nameCombo = topWin.document.querySelector(".react-select__single-value");
+  A(nameCombo && nameCombo.textContent === "Debjit Paul", "Name shows the selected value after run 1");
+  const [skipRes] = await chrome.scripting.executeScript({
+    target: { tabId: 1 }, func: shell.pageSelectName, args: ["Debjit Paul"],
+  });
+  A(skipRes.result && skipRes.result.skipped === true, "pageSelectName skips reselecting an already-correct name");
+
+  topDom.window.close();
+  shellDom.window.close();
+}
+
+// ============================================================
+// HARNESS 3 — background.js live badge (alarms + storage.onChanged)
+// ============================================================
+async function harness3() {
+  console.log("\n== Harness 3: background.js live badge/tooltip ==");
+  const bgSrc = fs.readFileSync(path.join(ROOT, "background.js"), "utf8");
+  let badge = { text: null, color: null, title: null };
+  let alarmCfg = null; // null = cleared
+  const listeners = { changed: [], installed: [], startup: [], alarm: [] };
+  let store = { timer: { activeId: null, startedAt: null }, entries: [] };
+  const chrome = {
+    action: {
+      setBadgeText: ({ text }) => { badge.text = text; },
+      setBadgeBackgroundColor: ({ color }) => { badge.color = color; },
+      setTitle: ({ title }) => { badge.title = title; },
+    },
+    storage: {
+      local: { get: async (k) => (Array.isArray(k) ? Object.fromEntries(k.map((x) => [x, store[x]])) : { [k]: store[k] }) },
+      onChanged: { addListener: (fn) => listeners.changed.push(fn) },
+    },
+    alarms: {
+      create: (name, cfg) => { alarmCfg = { name, ...cfg }; },
+      clear: () => { alarmCfg = null; },
+      onAlarm: { addListener: (fn) => listeners.alarm.push(fn) },
+    },
+    runtime: {
+      onInstalled: { addListener: (fn) => listeners.installed.push(fn) },
+      onStartup: { addListener: (fn) => listeners.startup.push(fn) },
+    },
+  };
+  // simulates a real chrome.storage.local.set: mutates store, fires onChanged
+  const fireChange = (patch) => {
+    Object.assign(store, patch);
+    const changes = Object.fromEntries(Object.keys(patch).map((k) => [k, { newValue: patch[k] }]));
+    listeners.changed.forEach((f) => f(changes, "local"));
+  };
+  const fn = new Function("chrome", bgSrc + "\n//# sourceURL=background.js");
+  fn(chrome);
+  await sleep(20); // let the top-level syncBadge() resolve
+
+  A(badge.text === "OFF" && badge.color === "#64748b", "initial state (no timer) shows OFF/gray");
+  A(alarmCfg === null, "no alarm scheduled while idle");
+  A(badge.title.includes("no timer running"), "idle tooltip says no timer running");
+
+  // start a timer on entry "e1" (ZuPOS), ~5s ago
+  store.entries = [{ id: "e1", project: "ZuPOS", accSec: 0 }];
+  fireChange({ timer: { activeId: "e1", startedAt: Date.now() - 5000 } });
+  await sleep(20);
+  A(badge.color === "#16a34a", "timer start -> badge turns green");
+  A(alarmCfg && alarmCfg.name === "tick" && alarmCfg.periodInMinutes === 1, "1-minute repeating alarm scheduled");
+  A(/^\d+m$/.test(badge.text), "under an hour -> badge shows minutes, e.g. 0m");
+  A(badge.title.includes("ZuPOS") && badge.title.startsWith("Running:"), "tooltip names the running project");
+
+  // simulate an alarm tick with over an hour elapsed -> hour-precision badge
+  store.entries[0].accSec = 3661; // 1h01m01s
+  listeners.alarm.forEach((f) => f({ name: "tick" }));
+  await sleep(20);
+  A(badge.text === "1h", ">=1h elapsed -> badge collapses to whole hours (e.g. 1h)");
+  A(/01:0\d:\d\d/.test(badge.title), "tooltip shows full hh:mm:ss detail");
+
+  // an alarm event for a different name is ignored
+  badge.text = "1h";
+  listeners.alarm.forEach((f) => f({ name: "someOtherAlarm" }));
+  A(badge.text === "1h", "unrelated alarm name ignored");
+
+  // pause -> activeId null
+  fireChange({ timer: { activeId: null, startedAt: null } });
+  await sleep(20);
+  A(badge.text === "OFF" && badge.color === "#64748b", "timer pause -> badge back to OFF/gray");
+  A(alarmCfg === null, "alarm cleared on pause");
+
+  // unrelated storage key change (no "timer" in patch) -> badge untouched
+  badge.text = "OFF";
+  const changesNoTimer = { entries: { newValue: [] } };
+  listeners.changed.forEach((f) => f(changesNoTimer, "local"));
+  await sleep(10);
+  A(badge.text === "OFF", "storage change without a timer key does not re-sync badge");
+
+  // service worker restart while a timer was already running (onStartup re-syncs)
+  store.timer = { activeId: "e1", startedAt: Date.now() };
+  store.entries[0].accSec = 0;
+  badge = { text: null, color: null, title: null };
+  await Promise.all(listeners.startup.map((f) => f()));
+  await sleep(20);
+  A(badge.color === "#16a34a" && alarmCfg !== null, "onStartup re-syncs badge + alarm to running state from storage");
+}
+
+// ============================================================
+// HARNESS 4 — pageFormReady logic + guard against a fixed-sleep regression
+// ============================================================
+async function harness4() {
+  console.log("\n== Harness 4: cold-load readiness fix ==");
+
+  // Regression guard: this exact bug ("worked on reload, not on first load")
+  // was a fixed `sleep(1200)` racing real page-hydration time on cold loads
+  // (confirmed live: cold ~1.3s+, warm ~0.8s). ensureFormTab must poll for
+  // real readiness instead of guessing a constant.
+  A(!/await sleep\(1200\)/.test(jsSrc), "ensureFormTab no longer uses a fixed 1200ms guess");
+  A(jsSrc.includes("waitForFormReady"), "ensureFormTab waits for real page readiness");
+
+  const start = jsSrc.indexOf("function pageFormReady");
+  const end = jsSrc.indexOf("async function waitForFormReady");
+  const src = jsSrc.slice(start, end);
+  A(start > 0 && end > start, "extracted pageFormReady from source");
+
+  const dom = new JSDOM(`<body></body>`, { runScripts: "dangerously" });
+  const win = dom.window;
+  Object.defineProperty(win.HTMLElement.prototype, "offsetParent", {
+    configurable: true,
+    get() { return this.isConnected && this.style.display !== "none" ? (this.parentNode || win.document.body) : null; },
+  });
+  win.eval(src);
+
+  A(win.pageFormReady() === false, "not ready on a blank page (nothing rendered yet)");
+
+  const ph = win.document.createElement("div");
+  ph.className = "react-select__placeholder";
+  ph.textContent = "Name";
+  win.document.body.appendChild(ph);
+  A(win.pageFormReady() === true, "ready once the Name placeholder exists (fresh/cold load case)");
+  ph.remove();
+  A(win.pageFormReady() === false, "not ready again once placeholder removed");
+
+  const sv = win.document.createElement("div");
+  sv.className = "react-select__single-value";
+  sv.textContent = "Md Ashraful Islam";
+  win.document.body.appendChild(sv);
+  A(win.pageFormReady() === true, "ready once Name already shows a selected value (reused-tab case)");
+  sv.remove();
+
+  const create = win.document.createElement("div");
+  create.textContent = "Create";
+  win.document.body.appendChild(create);
+  A(win.pageFormReady() === true, "ready once the Create button exists (fallback signal)");
+
+  dom.window.close();
+}
+
+(async () => {
+  await harness1();
+  await harness2();
+  await harness3();
+  await harness4();
+  console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
+  process.exit(fails === 0 ? 0 : 1);
+})();
