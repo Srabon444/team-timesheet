@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Daily Timesheet Auto-Filler",
+  "version": "1.0.0",
+  "description": "Track per-project time with timers, then auto-fill the Techzu Fillout daily timesheet form.",
+  "permissions": ["storage", "scripting", "tabs", "alarms"],
+  "host_permissions": ["https://techzu.fillout.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Daily Timesheet",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

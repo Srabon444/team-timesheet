@@ -1,0 +1,125 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 340px;
+  font: 13px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+.wrap { padding: 14px; }
+.hidden { display: none !important; }
+h1 { font-size: 18px; margin: 0 0 8px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #94a3b8; margin: 16px 0 6px; }
+.muted { color: #94a3b8; }
+.small { font-size: 11px; }
+.req { color: #f87171; }
+
+label { display: block; margin: 8px 0 3px; font-size: 12px; color: #cbd5e1; }
+select, input[type=text], input[type=time] {
+  width: 100%;
+  padding: 7px 9px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 13px;
+}
+select:focus, input:focus { outline: none; border-color: #3b82f6; }
+
+.btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover { background: #273449; }
+.btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.btn.primary:hover { background: #2563eb; }
+.btn.danger { background: #dc2626; border-color: #dc2626; color: #fff; margin-top: 16px; }
+.btn.danger:hover { background: #b91c1c; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.link { background: none; border: none; color: #60a5fa; cursor: pointer; font-size: 12px; padding: 0; }
+
+.topbar { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 8px; border-bottom: 1px solid #1e293b; }
+.who { font-weight: 600; font-size: 14px; }
+
+.status { min-height: 14px; margin: 6px 0 0; font-size: 11px; color: #94a3b8; }
+.status.err { color: #f87171; }
+.status.ok { color: #4ade80; }
+
+.entries { display: flex; flex-direction: column; gap: 6px; }
+.entry {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 8px;
+}
+.entry.active { border-color: #3b82f6; }
+.entry .row1 { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.entry .pname { font-weight: 600; }
+.entry .cat { font-size: 11px; color: #94a3b8; }
+.entry .desc { font-size: 11px; color: #cbd5e1; margin-top: 2px; word-break: break-word; }
+.entry .row2 { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.entry .time { width: 74px; text-align: center; font-variant-numeric: tabular-nums; }
+.entry .tbtn {
+  width: 30px; height: 28px; padding: 0;
+  border: 1px solid #334155; border-radius: 6px;
+  background: #0f172a; color: #e2e8f0; cursor: pointer; font-size: 13px;
+}
+.entry .tbtn.playing { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.entry .live { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 12px; color: #4ade80; min-width: 70px; text-align: right; }
+.entry.active .live::before { content: "\25CF"; margin-right: 5px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0.15; } }
+.entry .acts { display: flex; align-items: center; gap: 10px; }
+.entry .edit { color: #60a5fa; background: none; border: none; cursor: pointer; font-size: 12px; padding: 0; }
+.entry .del { color: #f87171; background: none; border: none; cursor: pointer; font-size: 15px; }
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  z-index: 100;
+}
+.confirmBox {
+  width: 100%;
+  max-width: 100%;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 14px;
+  box-sizing: border-box;
+}
+.confirmBox p {
+  margin: 0 0 12px;
+  white-space: pre-line;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.confirmActions { display: flex; gap: 8px; }
+.confirmActions .btn { width: auto; flex: 1; margin-top: 0; }
+
+.searchWrap { position: relative; }
+.searchList {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  z-index: 50;
+}
+.searchItem { padding: 7px 9px; cursor: pointer; font-size: 13px; }
+.searchItem.hi, .searchItem:hover { background: #334155; }

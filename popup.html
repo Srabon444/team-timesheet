@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- SETUP VIEW (first run: no name saved) -->
+    <section id="setup" class="view hidden">
+      <h1>Setup</h1>
+      <p class="muted">Load the name list from the form, then pick yours.</p>
+      <button id="loadNames" class="btn">Load names from form</button>
+      <div id="setupPicker" class="hidden">
+        <label>Your name</label>
+        <div class="searchWrap">
+          <input id="nameSelect" type="text" autocomplete="off" placeholder="Type to search...">
+          <div id="nameList" class="searchList hidden"></div>
+        </div>
+        <button id="saveName" class="btn primary">Save</button>
+      </div>
+      <p id="setupStatus" class="status"></p>
+    </section>
+
+    <!-- MAIN VIEW -->
+    <section id="main" class="view hidden">
+      <div class="topbar">
+        <div>
+          <div class="who" id="whoName">—</div>
+          <div class="muted small" id="whoDate">—</div>
+        </div>
+        <button id="changeName" class="link">change</button>
+      </div>
+
+      <h2>Add project</h2>
+      <div class="addform">
+        <label>Project</label>
+        <div class="searchWrap">
+          <input id="projSelect" type="text" autocomplete="off" placeholder="Type to search...">
+          <div id="projList" class="searchList hidden"></div>
+        </div>
+        <label>Work Category</label>
+        <select id="catSelect"></select>
+        <label>Description <span class="req">*</span></label>
+        <input id="descInput" type="text" placeholder="Task description">
+        <button id="addProject" class="btn primary">+ Add Project</button>
+        <button id="cancelEdit" class="btn hidden">Cancel</button>
+        <p id="addStatus" class="status"></p>
+      </div>
+
+      <h2>Today's projects</h2>
+      <div id="entries" class="entries"></div>
+      <p id="emptyMsg" class="muted small">No projects yet.</p>
+
+      <button id="finalSubmit" class="btn danger">Final Submit</button>
+      <p id="submitStatus" class="status"></p>
+    </section>
+
+  </div>
+
+  <!-- Custom confirm modal — native window.confirm() renders broken/cropped
+       inside a small extension popup and can get the popup killed before a
+       click registers, so Final Submit uses this instead. -->
+  <div id="confirmOverlay" class="overlay hidden">
+    <div class="confirmBox">
+      <p id="confirmMsg"></p>
+      <div class="confirmActions">
+        <button id="confirmNo" class="btn">Cancel</button>
+        <button id="confirmYes" class="btn danger">Yes, submit</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
