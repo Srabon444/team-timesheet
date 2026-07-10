@@ -95,8 +95,10 @@ function showSetup() {
   if (S.names && S.names.length) {
     $("nameSelect").value = S.name || "";
     $("setupPicker").classList.remove("hidden");
+    $("nameSelect").focus();
   } else {
     $("setupPicker").classList.add("hidden");
+    $("loadNames").focus();
   }
 }
 function showMain() {
@@ -107,6 +109,7 @@ function showMain() {
   fillSelect($("catSelect"), CATEGORIES);
   refreshAddForm();
   render();
+  $("projSelect").focus();
 }
 // Reflect S.draft into the add-form (survives popup close / tab switch).
 // draft = { project, category, description, editingId }
