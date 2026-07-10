@@ -40,6 +40,7 @@ async function harness1() {
   const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
   const win = dom.window;
   win.chrome = chrome;
+  win.matchMedia = win.matchMedia || (() => ({ matches: false }));
   win.fetch = async () => ({ text: async () => realForm });
   let uid = 0;
   win.crypto = { randomUUID: () => "id-" + uid++ };
@@ -312,6 +313,14 @@ async function harness1() {
   await sleep(20);
   A($("confirmOverlay").classList.contains("hidden"), "delete with confirmBeforeDelete off skips the modal");
   A(store.entries.length === beforeCount2 - 1, "entry deleted immediately when confirmBeforeDelete is off");
+
+  // THEME: resolveTheme + applyTheme + data-theme attribute reflects on load
+  A(win.resolveTheme("dark") === "dark" && win.resolveTheme("light") === "light", "resolveTheme passes through explicit dark/light");
+  A(win.resolveTheme("system") === "dark" || win.resolveTheme("system") === "light", "resolveTheme resolves system to a concrete value");
+  win.applyTheme("light");
+  await sleep(10);
+  A(win.document.documentElement.dataset.theme === "light", "applyTheme sets data-theme on the document");
+  A(store.theme === "light", "applyTheme persists the choice to storage");
 
   dom.window.close();
 }

@@ -29,6 +29,17 @@ function hhmmToSec(str) {
   const [h, m] = String(str).split(":").map((x) => parseInt(x, 10) || 0);
   return (h * 60 + m) * 60;
 }
+function resolveTheme(theme) {
+  if (theme === "system") {
+    return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return theme;
+}
+function applyTheme(theme) {
+  S.theme = theme;
+  document.documentElement.dataset.theme = resolveTheme(theme);
+  chrome.storage.local.set({ theme });
+}
 
 // ---------- storage / state ----------
 async function persist() {
@@ -42,6 +53,7 @@ async function init() {
   S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
   S.dailyLimitHours = S.dailyLimitHours || 8;
   S.warnedDate = S.warnedDate === undefined ? null : S.warnedDate;
+  S.theme = S.theme || "dark";
   const today = todayStr();
   if (S.date !== today) {
     // Archive the outgoing day's entries before clearing them — skip on the
@@ -57,6 +69,7 @@ async function init() {
     S.date = today;
     await chrome.storage.local.set({ history: S.history, entries: [], timer: S.timer, draft: null, date: today });
   }
+  document.documentElement.dataset.theme = resolveTheme(S.theme);
   route();
 }
 
