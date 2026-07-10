@@ -21,6 +21,8 @@ async function harness1() {
   let lastFill = null;
   let reloadCount = 0;
   let queryReturnsExisting = false;
+  let tabUpdatedListeners = [];
+  const fireTabUpdated = (id, status) => tabUpdatedListeners.forEach((fn) => fn(id, { status }));
   const chrome = {
     storage: { local: {
       get: async (k) => (k === null ? { ...store } : {}),
@@ -31,7 +33,14 @@ async function harness1() {
       get: async () => ({ id: 1, status: "complete" }),
       update: async () => {}, remove: async () => {},
       query: async () => (queryReturnsExisting ? [{ id: 1, status: "complete" }] : []),
-      reload: async () => { reloadCount++; },
+      // Fires the onUpdated "complete" event asynchronously (a real reload
+      // is never synchronous) so ensureFormTab's event-based wait resolves
+      // the same way it would against the real chrome.tabs API.
+      reload: async () => { reloadCount++; setTimeout(() => fireTabUpdated(1, "complete"), 5); },
+      onUpdated: {
+        addListener: (fn) => tabUpdatedListeners.push(fn),
+        removeListener: (fn) => { tabUpdatedListeners = tabUpdatedListeners.filter((l) => l !== fn); },
+      },
     },
     scripting: { executeScript: async () => [{ result: {} }] }, // fillFormOnPage is stubbed below; harness2 covers real cross-frame automation
   };
@@ -57,6 +66,29 @@ async function harness1() {
   const vis = (id) => !$(id).classList.contains("hidden");
 
   A(vis("setup") && !vis("main"), "first run shows setup view");
+
+  // REGRESSION: this is exactly the race that let automation run against a
+  // page a moment away from being torn down by its own reload — a tabs.get()
+  // poll right after reload() can still read the OLD "complete" status
+  // before Chrome flips it to "loading". waitForTabReloadComplete must wait
+  // for the real onUpdated event instead, and only for a matching tab id
+  // and status "complete" — never resolve early or for the wrong signal.
+  {
+    let resolved = false;
+    const p = win.waitForTabReloadComplete(1).then(() => { resolved = true; });
+    await sleep(20);
+    A(resolved === false, "waitForTabReloadComplete does not resolve on its own before any onUpdated event");
+    fireTabUpdated(2, "complete"); // wrong tab id
+    await sleep(20);
+    A(resolved === false, "an onUpdated event for a DIFFERENT tab id is ignored");
+    fireTabUpdated(1, "loading"); // right tab, wrong status
+    await sleep(20);
+    A(resolved === false, "an onUpdated event with status other than 'complete' is ignored");
+    fireTabUpdated(1, "complete");
+    await sleep(20);
+    A(resolved === true, "waitForTabReloadComplete resolves once the matching tab id reports status 'complete'");
+    await p;
+  }
   A(store.dailyLimitHours === 8, "dailyLimitHours default persisted to storage on first init (not just in-memory), so background.js can read it");
 
   $("loadNames").click();

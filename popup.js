@@ -513,8 +513,20 @@ async function ensureFormTab() {
   // after a wait. Always reloads, new tab or reused, even though this means
   // any in-progress session-only entries already on a reused tab get
   // discarded (Fillout doesn't persist entries until the real Submit).
+  //
+  // CRITICAL: wait for the reload via the onUpdated *event*, not by polling
+  // tabs.get().status. Confirmed live: right after reload() resolves, a
+  // tabs.get() call can still read the OLD "complete" status for a brief
+  // moment before Chrome flips it to "loading" — a poll landing in that gap
+  // treats the reload as already done and lets automation run against the
+  // page that's a moment away from being torn down, silently losing
+  // whatever it just selected (e.g. Name) once the real reload lands. This
+  // is exactly why it only worked after a prior *manual* reload — that gave
+  // the race window time to pass before Final Submit ever ran. The listener
+  // is attached before reload() is called so the transition can't be missed.
+  const reloaded = waitForTabReloadComplete(tab.id);
   await chrome.tabs.reload(tab.id);
-  await waitTabComplete(tab.id);
+  await reloaded;
   // A fixed sleep here used to guess how long the React app takes to
   // actually become interactive after the tab reports "complete". Confirmed
   // live: on a cold load that can take 1.3s+, longer than any fixed guess
@@ -562,6 +574,29 @@ async function waitTabComplete(tabId, timeout = 20000) {
     if (t.status === "complete") return;
     await sleep(200);
   }
+}
+// Event-based wait for a reload specifically — see the CRITICAL comment at
+// its call site for why this can't be a tabs.get().status poll like
+// waitTabComplete above. Must be called (to attach the listener) BEFORE
+// chrome.tabs.reload() is issued, so the status transition can't be missed.
+function waitForTabReloadComplete(tabId, timeout = 20000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeout);
+    function listener(id, changeInfo) {
+      if (id === tabId && changeInfo.status === "complete") {
+        clearTimeout(timer);
+        finish();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
 }
 
 // =====================================================================
