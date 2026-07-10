@@ -729,12 +729,71 @@ async function harness5() {
   dom.window.close();
 }
 
+// ============================================================
+// HARNESS 6 — Dashboard math (pure functions) against a synthetic fixture
+// ============================================================
+async function harness6() {
+  console.log("\n== Harness 6: dashboard math ==");
+  const tabJsSrc = fs.readFileSync(path.join(ROOT, "tab.js"), "utf8");
+  const ctx = {};
+  // pure functions have no DOM/chrome dependency — eval directly into a plain object.
+  // tab.js still has a top-level document.addEventListener(...) call (Task 6's nav wiring),
+  // which runs immediately on eval — stub `document` so that doesn't throw before the
+  // pure function declarations (hoisted above it) land on ctx. Also stub `pad`, a popup.js
+  // global that mondayOf/weekDates rely on (popup.js isn't loaded in this isolated context).
+  ctx.document = { addEventListener: () => {} };
+  ctx.pad = (n) => String(n).padStart(2, "0");
+  const vm = require("vm");
+  vm.createContext(ctx);
+  vm.runInContext(tabJsSrc, ctx);
+
+  const fixture = {
+    "2026-07-06": [{ project: "ZuPOS", category: "Development", accSec: 3600 }],          // Mon, 1h
+    "2026-07-07": [],                                                                      // Tue, nothing
+    "2026-07-08": [{ project: "ZuPOS", category: "Development", accSec: 1800 },
+                    { project: "VSB", category: "Code Review", accSec: 1800 }],            // Wed, 1h total
+    "2026-07-09": [{ project: "VSB", category: "Meeting (General)", accSec: 7200 }],       // Thu, 2h (busiest)
+    "2026-07-10": [{ project: "ZuPOS", category: "Development", accSec: 900 }],            // Fri, 15m
+  };
+
+  A(ctx.dayTotal(fixture["2026-07-08"]) === 3600, "dayTotal sums a day's entries");
+  A(ctx.dayTotal([]) === 0, "dayTotal of an empty day is 0");
+
+  A(ctx.trackedTotal(fixture) === 3600 + 0 + 3600 + 7200 + 900, "trackedTotal sums every day");
+
+  A(ctx.activeDayCount(fixture) === 4, "activeDayCount counts only days with entries (Tue excluded)");
+
+  A(ctx.dailyAverage(fixture) === Math.round((3600 + 3600 + 7200 + 900) / 4), "dailyAverage divides by active days, not calendar days");
+  A(ctx.dailyAverage({}) === 0, "dailyAverage of no data is 0, not NaN");
+
+  const busiest = ctx.busiestDay(fixture);
+  A(busiest && busiest.date === "2026-07-09" && busiest.total === 7200, "busiestDay finds the highest-total day");
+
+  const byProj = ctx.byProject(fixture);
+  A(byProj["ZuPOS"] === 3600 + 1800 + 900, "byProject sums across all days for one project");
+  A(byProj["VSB"] === 1800 + 7200, "byProject sums a second project independently");
+
+  const byCat = ctx.byCategory(fixture);
+  A(byCat["Development"] === 3600 + 1800 + 900, "byCategory sums across all days for one category");
+  A(byCat["Meeting (General)"] === 7200, "byCategory sums a second category independently");
+
+  A(ctx.mondayOf("2026-07-10") === "2026-07-06", "mondayOf finds the Monday of a Friday's week");
+  A(ctx.mondayOf("2026-07-06") === "2026-07-06", "mondayOf on a Monday returns itself");
+
+  const dates = ctx.weekDates("2026-07-06");
+  A(dates.length === 7 && dates[0] === "2026-07-06" && dates[6] === "2026-07-12", "weekDates returns Mon..Sun");
+
+  const totals = ctx.weekTotals(fixture, "2026-07-06");
+  A(totals.length === 7 && totals[0].total === 3600 && totals[4].total === 900 && totals[5].total === 0, "weekTotals maps each day of the week to its total, 0 for days outside the fixture");
+}
+
 (async () => {
   await harness1();
   await harness2();
   await harness3();
   await harness4();
   await harness5();
+  await harness6();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();
