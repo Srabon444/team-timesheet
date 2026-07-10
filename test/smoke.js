@@ -675,11 +675,66 @@ async function harness4() {
   dom.window.close();
 }
 
+// ============================================================
+// HARNESS 5 — tab.html shell: sidebar nav + Today section reuses popup.js
+// ============================================================
+async function harness5() {
+  console.log("\n== Harness 5: tab shell nav + Today section reuse ==");
+  const tabHtml = fs.readFileSync(path.join(ROOT, "tab.html"), "utf8");
+  const tabJsSrc = fs.readFileSync(path.join(ROOT, "tab.js"), "utf8");
+  const store = {};
+  const chrome = {
+    storage: { local: {
+      get: async (k) => (k === null ? { ...store } : {}),
+      set: async (obj) => { Object.assign(store, obj); },
+    }},
+    tabs: { query: async () => [], create: async () => ({ id: 1, status: "complete" }), get: async () => ({ status: "complete" }), update: async () => {} },
+    scripting: { executeScript: async () => [{ result: {} }] },
+  };
+  const dom = new JSDOM(tabHtml, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = chrome;
+  win.matchMedia = () => ({ matches: false });
+  win.fetch = async () => ({ text: async () => "" });
+  win.crypto = { randomUUID: () => "id-tab" };
+  const s1 = win.document.createElement("script");
+  s1.textContent = jsSrc; // popup.js
+  win.document.body.appendChild(s1);
+  const s2 = win.document.createElement("script");
+  s2.textContent = tabJsSrc;
+  win.document.body.appendChild(s2);
+  win.document.dispatchEvent(new win.Event("DOMContentLoaded"));
+  await sleep(50);
+
+  const $ = (id) => win.document.getElementById(id);
+  A(!$("panelToday").classList.contains("hidden"), "Today panel visible by default");
+  A($("panelDashboard").classList.contains("hidden"), "Dashboard panel hidden by default");
+  A(!$("setup").classList.contains("hidden"), "Today panel's setup view shows (popup.js's route() runs unmodified in the tab)");
+
+  $("navDashboard").click();
+  await sleep(10);
+  A($("panelToday").classList.contains("hidden"), "clicking Dashboard nav hides Today panel");
+  A(!$("panelDashboard").classList.contains("hidden"), "clicking Dashboard nav shows Dashboard panel");
+  A($("navDashboard").classList.contains("active"), "Dashboard nav button marked active");
+  A(!$("navToday").classList.contains("active"), "Today nav button no longer active");
+
+  $("navSettings").click();
+  await sleep(10);
+  A(!$("panelSettings").classList.contains("hidden"), "clicking Settings nav shows Settings panel");
+
+  $("navToday").click();
+  await sleep(10);
+  A(!$("panelToday").classList.contains("hidden"), "clicking Today nav returns to Today panel");
+
+  dom.window.close();
+}
+
 (async () => {
   await harness1();
   await harness2();
   await harness3();
   await harness4();
+  await harness5();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();

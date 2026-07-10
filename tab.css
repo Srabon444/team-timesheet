@@ -1,0 +1,51 @@
+body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a tab is full-width */
+
+.shell { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 200px;
+  flex: none;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-color);
+  padding: 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.brand { font-weight: 600; font-size: 14px; padding: 0 8px 16px; }
+.navBtn {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+.navBtn:hover { background: var(--bg-surface-hover); }
+.navBtn.active { background: var(--accent); color: var(--text-on-accent); }
+
+.content { flex: 1; padding: 24px; max-width: 900px; }
+.panel .wrap { padding: 0; max-width: 420px; } /* Today panel keeps the popup's comfortable form width */
+
+.statTiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+.statTile {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+}
+.statTile .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.statTile .value { font-size: 20px; font-weight: 600; margin-top: 4px; }
+.statTile .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.breakdownRow { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
+.breakdownRow .name { width: 120px; flex: none; color: var(--text-secondary); }
+.breakdownRow .bar { flex: 1; height: 8px; background: var(--bg-surface-2); border-radius: 4px; overflow: hidden; }
+.breakdownRow .bar > span { display: block; height: 100%; background: var(--accent); }
+.breakdownRow .amount { width: 60px; flex: none; text-align: right; color: var(--text-muted); }
+
+.settingsRow { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border-color); }
+.settingsRow .label { font-size: 13px; }
+.settingsRow .desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.dangerZone { margin-top: 24px; padding: 12px; border: 1px solid var(--danger); border-radius: 8px; }
