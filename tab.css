@@ -49,3 +49,13 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .settingsRow .label { font-size: 13px; }
 .settingsRow .desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 .dangerZone { margin-top: 24px; padding: 12px; border: 1px solid var(--danger); border-radius: 8px; }
+
+.weekNav { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+.weekChart { display: flex; align-items: flex-end; gap: 8px; height: 140px; padding: 8px 0; border-bottom: 1px solid var(--border-color); }
+.weekChart .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+/* dataviz: bar mark spec is "cap it, never fill the slot" (<=24px thick) — the
+   column flexes to share the chart width, but the bar itself stays capped and
+   centered, leaving air on either side. */
+.weekChart .bar { width: 100%; max-width: 24px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+.weekChart .col.today .bar { background: var(--success); }
+.weekChart .dow { font-size: 11px; color: var(--text-muted); }

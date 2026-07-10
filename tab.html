@@ -74,7 +74,27 @@
       </section>
 
       <section id="panelDashboard" class="panel hidden">
-        <!-- filled in by Task 7/8 -->
+        <h1>Dashboard</h1>
+
+        <div class="weekNav">
+          <button id="weekPrev" class="btn" style="width:auto">&lt;</button>
+          <span id="weekLabel" class="muted"></span>
+          <button id="weekNext" class="btn" style="width:auto">&gt;</button>
+        </div>
+        <div id="weekChart" class="weekChart"></div>
+
+        <div class="statTiles">
+          <div class="statTile"><div class="label">Today</div><div class="value" id="tileToday">00:00</div></div>
+          <div class="statTile"><div class="label">Tracked Total</div><div class="value" id="tileTotal">00:00</div></div>
+          <div class="statTile"><div class="label">Daily Average</div><div class="value" id="tileAvg">00:00</div><div class="sub" id="tileAvgSub"></div></div>
+          <div class="statTile"><div class="label">Busiest Day</div><div class="value" id="tileBusiest">—</div><div class="sub" id="tileBusiestSub"></div></div>
+        </div>
+
+        <h2>By project</h2>
+        <div id="byProjectList"></div>
+
+        <h2>By category</h2>
+        <div id="byCategoryList"></div>
       </section>
 
       <section id="panelSettings" class="panel hidden">

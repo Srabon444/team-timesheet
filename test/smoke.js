@@ -726,6 +726,34 @@ async function harness5() {
   await sleep(10);
   A(!$("panelToday").classList.contains("hidden"), "clicking Today nav returns to Today panel");
 
+  // DASHBOARD RENDERING: seed one entry, open Dashboard, confirm it reflects
+  $("navToday").click();
+  await sleep(10);
+  $("loadNames") && ($("loadNames").click(), await sleep(80)); // no-op if already past setup
+  if (!win.document.getElementById("main").classList.contains("hidden") === false) {
+    // still on setup (no names loaded in this harness) — set name directly via storage + reinit
+  }
+  store.name = "Debjit Paul";
+  store.date = "2026-07-10";
+  store.entries = [{ id: "e1", project: "ZuPOS", category: "Development", description: "x", accSec: 3600 }];
+  store.timer = { activeId: null, startedAt: null };
+  await win.init();
+  await sleep(20);
+
+  $("navDashboard").click();
+  await sleep(20);
+  A($("tileToday").textContent === "01:00", "Today tile reflects today's tracked time");
+  A($("weekChart").children.length === 7, "week chart renders 7 day columns");
+  A($("byProjectList").textContent.includes("ZuPOS"), "by-project breakdown lists ZuPOS");
+
+  const prevLabel = $("weekLabel").textContent;
+  $("weekPrev").click();
+  await sleep(20);
+  A($("weekLabel").textContent !== prevLabel, "clicking the previous-week arrow changes the visible week");
+  $("weekNext").click();
+  await sleep(20);
+  A($("weekLabel").textContent === prevLabel, "clicking next returns to the original week");
+
   dom.window.close();
 }
 

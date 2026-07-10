@@ -61,6 +61,67 @@ function buildDaysMap() {
   return { ...S.history, [S.date]: S.entries.map((e) => ({ ...e, accSec: elapsedSec(e) })) };
 }
 
+let weekOffset = 0; // 0 = week containing today, -1 = previous week, etc.
+
+function renderDashboard() {
+  const daysMap = buildDaysMap();
+  const todayMonday = mondayOf(S.date);
+  const shiftedMonday = (() => {
+    const d = new Date(todayMonday + "T00:00:00");
+    d.setDate(d.getDate() + weekOffset * 7);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  })();
+  const totals = weekTotals(daysMap, shiftedMonday);
+  const maxTotal = Math.max(1, ...totals.map((t) => t.total));
+  const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  document.getElementById("weekLabel").textContent =
+    `${shiftedMonday} – ${weekDates(shiftedMonday)[6]}`;
+
+  const chart = document.getElementById("weekChart");
+  chart.innerHTML = "";
+  totals.forEach((t, i) => {
+    const col = document.createElement("div");
+    col.className = "col" + (t.date === S.date ? " today" : "");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.style.height = `${Math.max(2, (t.total / maxTotal) * 100)}px`;
+    bar.title = `${DOW[i]} ${t.date}: ${secToHHMM(t.total)}`;
+    const dow = document.createElement("div");
+    dow.className = "dow";
+    dow.textContent = DOW[i];
+    col.appendChild(bar);
+    col.appendChild(dow);
+    chart.appendChild(col);
+  });
+
+  document.getElementById("tileToday").textContent = secToHHMM(dayTotal(daysMap[S.date]));
+  document.getElementById("tileTotal").textContent = secToHHMM(trackedTotal(daysMap));
+  document.getElementById("tileAvg").textContent = secToHHMM(dailyAverage(daysMap));
+  document.getElementById("tileAvgSub").textContent = `across ${activeDayCount(daysMap)} active day(s)`;
+  const busiest = busiestDay(daysMap);
+  document.getElementById("tileBusiest").textContent = busiest ? secToHHMM(busiest.total) : "—";
+  document.getElementById("tileBusiestSub").textContent = busiest ? busiest.date : "";
+
+  const renderBreakdown = (containerId, totalsMap) => {
+    const container = document.getElementById(containerId);
+    container.innerHTML = "";
+    const entries = Object.entries(totalsMap).sort((a, b) => b[1] - a[1]);
+    const max = Math.max(1, ...entries.map(([, v]) => v));
+    for (const [name, secs] of entries) {
+      const row = document.createElement("div");
+      row.className = "breakdownRow";
+      row.innerHTML = `<div class="name"></div><div class="bar"><span></span></div><div class="amount"></div>`;
+      row.querySelector(".name").textContent = name;
+      row.querySelector(".bar > span").style.width = `${(secs / max) * 100}%`;
+      row.querySelector(".amount").textContent = secToHHMM(secs);
+      container.appendChild(row);
+    }
+  };
+  renderBreakdown("byProjectList", byProject(daysMap));
+  renderBreakdown("byCategoryList", byCategory(daysMap));
+}
+
 function showPanel(name) {
   for (const panel of ["today", "dashboard", "settings"]) {
     document.getElementById("panel" + panel[0].toUpperCase() + panel.slice(1)).classList.toggle("hidden", panel !== name);
@@ -74,4 +135,6 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("navToday").onclick = () => showPanel("today");
   document.getElementById("navDashboard").onclick = () => showPanel("dashboard");
   document.getElementById("navSettings").onclick = () => showPanel("settings");
+  document.getElementById("weekPrev").onclick = () => { weekOffset--; renderDashboard(); };
+  document.getElementById("weekNext").onclick = () => { weekOffset++; renderDashboard(); };
 });
