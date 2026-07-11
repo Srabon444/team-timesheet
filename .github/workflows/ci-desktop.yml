@@ -1,0 +1,50 @@
+name: CI (desktop)
+
+on:
+  push:
+    branches: ["desktop-*"]
+    paths: ["desktop/**", ".github/workflows/ci-desktop.yml"]
+  pull_request:
+    branches: ["desktop-*"]
+    paths: ["desktop/**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm install
+      - name: Vitest
+        working-directory: desktop
+        run: npm test
+      - name: Vite build
+        working-directory: desktop
+        run: npm run build
+
+  rust-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libssl-dev libgtk-3-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend deps + build (tauri needs ../dist)
+        working-directory: desktop
+        run: npm install && npm run build
+      - name: cargo check
+        working-directory: desktop/src-tauri
+        run: cargo check --locked
