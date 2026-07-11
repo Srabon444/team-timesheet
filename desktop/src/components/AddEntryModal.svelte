@@ -73,7 +73,12 @@
     </select>
 
     <label for="proj">Project</label>
-    <input id="proj" list="projects" bind:value={project} placeholder="Pick a project…" />
+    <div class="proj-wrap">
+      <input id="proj" type="text" list="projects" bind:value={project} placeholder="Pick a project…" />
+      {#if project}
+        <button type="button" class="clear-x" onclick={() => (project = "")} title="Clear project">×</button>
+      {/if}
+    </div>
     <datalist id="projects">
       {#each PROJECTS as p}<option value={p}></option>{/each}
     </datalist>
@@ -128,6 +133,16 @@
   }
   h3 { margin: 0 0 6px; font-size: 17px; }
   .req { color: var(--danger-light); }
+  .proj-wrap { position: relative; }
+  .proj-wrap input { padding-right: 34px; }
+  .clear-x {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 22px; height: 22px; border-radius: 50%; border: none; padding: 0;
+    background: none; color: var(--text-muted); cursor: pointer;
+    font-size: 16px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .clear-x:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
   .timepick { display: flex; align-items: center; gap: 8px; }
   .timepick select { flex: 1; width: auto; }
   .colon { color: var(--text-muted); font-weight: 700; }
