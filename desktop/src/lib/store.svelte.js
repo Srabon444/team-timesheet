@@ -221,7 +221,12 @@ function listenForFillStatus() {
     if (s.error) {
       app.fill = { ...app.fill, running: false, added: s.added || 0, message: "", error: `Stopped: ${s.error} (${s.added || 0} added)` };
     } else if (s.done) {
-      app.fill = { ...app.fill, running: false, added: s.added || 0, error: "", message: `Done — ${s.added} entr${s.added === 1 ? "y" : "ies"} added. Review the Fillout window, then click its Submit yourself.` };
+      const base = `Done — ${s.added} entr${s.added === 1 ? "y" : "ies"} added. Review the Fillout window, then click its Submit yourself.`;
+      app.fill = {
+        ...app.fill, running: false, added: s.added || 0,
+        error: s.warning ? `${s.warning} (${s.added || 0} added)` : "",
+        message: s.warning ? "" : base,
+      };
     } else if (s.phase === "waiting-for-form") {
       app.fill = { ...app.fill, message: "Form loading…" };
     } else if (s.phase === "name-selected") {
