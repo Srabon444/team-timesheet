@@ -64,26 +64,58 @@ async function runner(entries, name) {
   // Delete whatever is already in the top-level "Timesheet Entries" list for
   // this Name+Date before filling, so re-running Final Submit (e.g. after
   // closing the window mid-fill) is a clean resync instead of piling up
-  // duplicates. Best-effort: an aria-label is tried first; if the form's
-  // markup doesn't match either heuristic, this quietly gives up and the
-  // fill proceeds without clearing rather than risking a wrong click.
+  // duplicates.
+  //
+  // The delete control's text/markup isn't known in advance, so instead of
+  // guessing its shape, this finds each row via its "Edit" control and picks
+  // the LAST other clickable element sharing an ancestor with it (climbing
+  // up to a few levels, since the row wrapper depth isn't known either) —
+  // that's reliably the delete "X" given the row's left-to-right layout.
+  // If a confirm step appears after clicking delete, it's clicked too.
+  // Returns how many entries were present before this ran, and how many
+  // are left afterward, so a caller can surface a warning instead of
+  // silently piling up duplicates when clearing doesn't fully work.
+  const countEntryRows = () =>
+    [...document.querySelectorAll("a,button,[role=button]")]
+      .filter((n) => /^edit$/i.test(norm(n.textContent)) && n.offsetParent !== null).length;
+
   const clearExistingEntries = async () => {
-    for (let i = 0; i < 40; i++) {
+    const before = countEntryRows();
+    for (let i = 0; i < 60 && countEntryRows() > 0; i++) {
       const editEl = [...document.querySelectorAll("a,button,[role=button]")]
         .find((n) => /^edit$/i.test(norm(n.textContent)) && n.offsetParent !== null);
-      if (!editEl) return;
+      if (!editEl) break;
       let del = document.querySelector('button[aria-label*="delete" i],button[aria-label*="remove" i]');
-      if (!del) {
-        const siblings = [...(editEl.parentElement ? editEl.parentElement.querySelectorAll("a,button,[role=button]") : [])]
-          .filter((n) => n.offsetParent !== null);
-        del = siblings.find((n) => n !== editEl && norm(n.textContent) === "");
+      let scope = editEl.parentElement;
+      for (let depth = 0; depth < 4 && scope && !del; depth++) {
+        const candidates = [...scope.querySelectorAll("a,button,[role=button]")].filter(
+          (n) =>
+            n.offsetParent !== null &&
+            n !== editEl &&
+            !editEl.contains(n) &&
+            !n.contains(editEl) &&
+            !/^(edit|create|submit)$/i.test(norm(n.textContent))
+        );
+        if (candidates.length) del = candidates[candidates.length - 1];
+        scope = scope.parentElement;
       }
-      if (!del) return; // couldn't identify a delete control — leave the list as-is
+      if (!del) break; // couldn't identify a delete control — stop rather than risk a wrong click
       for (const t of ["pointerdown", "mousedown", "mouseup", "click"]) {
         del.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
       }
-      await sleep(500);
+      await sleep(400);
+      // Some UIs confirm destructive actions with a second click.
+      const confirmBtn = [...document.querySelectorAll("button,[role=button]")].find(
+        (n) => n.offsetParent !== null && /^(delete|confirm|yes|remove|ok)$/i.test(norm(n.textContent))
+      );
+      if (confirmBtn) {
+        for (const t of ["pointerdown", "mousedown", "mouseup", "click"]) {
+          confirmBtn.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
+        }
+      }
+      await sleep(400);
     }
+    return { before, after: countEntryRows() };
   };
 
   // react-select: type the value into the combobox input, synthetic Enter.
@@ -139,7 +171,11 @@ async function runner(entries, name) {
     report({ phase: "name-selected", added });
 
     report({ phase: "clearing-entries", added });
-    await clearExistingEntries();
+    const clearResult = await clearExistingEntries();
+    const clearWarning =
+      clearResult.after > 0
+        ? clearResult.after + " old entr" + (clearResult.after === 1 ? "y" : "ies") + " could not be auto-cleared — remove manually."
+        : "";
 
     for (const e of entries) {
       const createBtn = await waitFor(() => {
@@ -194,8 +230,11 @@ async function runner(entries, name) {
       report({ phase: "progress", added, addedIds });
     }
 
-    banner("✓ Added " + added + " entr" + (added === 1 ? "y" : "ies") + ". Review them, then click the form's Submit yourself.", true);
-    report({ done: true, added, addedIds });
+    const doneMsg =
+      "✓ Added " + added + " entr" + (added === 1 ? "y" : "ies") + ". Review them, then click the form's Submit yourself." +
+      (clearWarning ? " ⚠ " + clearWarning : "");
+    banner(doneMsg, !clearWarning);
+    report({ done: true, added, addedIds, warning: clearWarning || undefined });
   } catch (err) {
     fail(err && err.message ? err.message : String(err));
   }
