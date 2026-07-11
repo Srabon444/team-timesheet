@@ -1,0 +1,221 @@
+// Central reactive state (Svelte 5 runes) + persistence via the Rust
+// commands. All timer/entry mutations funnel through here so every change
+// is saved and the UI stays live.
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
+import { FORM_URL } from "./constants.js";
+import { todayStr, secToHHMM } from "./time.js";
+import { dayTotal } from "./stats.js";
+import * as timer from "./timer.js";
+import { parseNames } from "./names.js";
+import { buildFillScript } from "./fillout-inject.js";
+
+function defaults() {
+  return {
+    days: {},
+    timer: { activeId: null, startedAt: null, date: null },
+    name: "",
+    names: [],
+    lastProject: null,
+    lastCategory: null,
+    dailyLimitHours: 8,
+    warnedDate: null,
+    confirmBeforeDelete: true,
+    theme: "dark",
+  };
+}
+
+export const app = $state({
+  data: defaults(),
+  loaded: false,
+  now: Date.now(), // ticked every second; reading it makes timer displays live
+  fill: { running: false, added: 0, message: "", error: "" },
+  confirm: null, // { message, yesLabel, resolve }
+});
+
+let saveTimer = null;
+export function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    invoke("save_data", { json: JSON.stringify(app.data) }).catch(() => {});
+  }, 150);
+}
+
+export function resolveTheme(theme) {
+  if (theme === "system") {
+    return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return theme;
+}
+export function applyTheme(theme) {
+  app.data.theme = theme;
+  document.documentElement.dataset.theme = resolveTheme(theme);
+  save();
+}
+
+export async function load() {
+  try {
+    const json = await invoke("load_data");
+    const stored = JSON.parse(json || "{}");
+    app.data = { ...defaults(), ...stored };
+    app.data.timer = { activeId: null, startedAt: null, date: null, ...(stored.timer || {}) };
+  } catch {
+    app.data = defaults();
+  }
+  document.documentElement.dataset.theme = resolveTheme(app.data.theme);
+  timer.rolloverIfNeeded(app.data);
+  app.loaded = true;
+  save();
+  startTick();
+  listenForFillStatus();
+}
+
+// ---------- timer / entry actions (persisting wrappers) ----------
+export function startEntryTimer(date, id) {
+  timer.startTimer(app.data, date, id);
+  save();
+}
+export function pauseEntryTimer() {
+  timer.pauseTimer(app.data);
+  save();
+}
+export function setEntryTime(date, id, hhmm) {
+  timer.editTime(app.data, date, id, hhmm);
+  save();
+}
+export function addEntry(date, fields) {
+  const e = timer.addEntry(app.data, date, fields);
+  save();
+  return e;
+}
+export function updateEntry(date, id, fields) {
+  const e = timer.updateEntry(app.data, date, id, fields);
+  save();
+  return e;
+}
+export function removeEntry(date, id) {
+  timer.deleteEntry(app.data, date, id);
+  save();
+}
+export function entryElapsed(entry) {
+  void app.now; // subscribe to the tick so displays update every second
+  return timer.elapsedSec(app.data, entry);
+}
+export function activeEntry() {
+  void app.now;
+  const { activeId, date } = app.data.timer;
+  if (!activeId) return null;
+  return timer.entriesFor(app.data, date).find((e) => e.id === activeId) || null;
+}
+
+// ---------- confirm modal (promise-based, per-action Yes label) ----------
+export function showConfirm(message, yesLabel = "Yes") {
+  return new Promise((resolve) => {
+    app.confirm = { message, yesLabel, resolve };
+  });
+}
+export function answerConfirm(result) {
+  if (app.confirm) {
+    app.confirm.resolve(result);
+    app.confirm = null;
+  }
+}
+
+// ---------- names ----------
+export async function fetchNames() {
+  const html = await invoke("fetch_form_html", { url: FORM_URL });
+  const names = parseNames(html);
+  if (!names.length) throw new Error("could not read names from the form");
+  app.data.names = names;
+  save();
+  return names;
+}
+
+// ---------- daily-limit notification + 1s tick ----------
+async function maybeNotifyLimit() {
+  const d = app.data;
+  if (!d.dailyLimitHours) return;
+  const today = todayStr();
+  if (d.warnedDate === today) return;
+  let total = dayTotal(d.days[today]);
+  if (d.timer.activeId && d.timer.startedAt && d.timer.date === today) {
+    total += (Date.now() - d.timer.startedAt) / 1000;
+  }
+  if (total >= d.dailyLimitHours * 3600) {
+    d.warnedDate = today;
+    save();
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === "granted";
+      if (granted) {
+        sendNotification({
+          title: "Daily limit reached",
+          body: `You've tracked ${d.dailyLimitHours}+ hour(s) today.`,
+        });
+      }
+    } catch {}
+  }
+}
+
+let tickHandle = null;
+function startTick() {
+  if (tickHandle) return;
+  tickHandle = setInterval(() => {
+    app.now = Date.now();
+    if (timer.rolloverIfNeeded(app.data)) save();
+    maybeNotifyLimit();
+  }, 1000);
+}
+
+// ---------- Final Submit (Fillout auto-fill) ----------
+export async function submitToFillout(date) {
+  const pending = timer.pendingEntries(app.data, date);
+  if (!pending.length) {
+    app.fill = { running: false, added: 0, message: "", error: "Everything already submitted. Add a new entry to submit more." };
+    return;
+  }
+  timer.pauseTimer(app.data); // finalize times before building the payload
+  save();
+  const payload = pending.map((e) => ({
+    id: e.id,
+    project: e.project,
+    category: e.category,
+    description: e.description,
+    hhmm: secToHHMM(e.accSec || 0),
+  }));
+  app.fill = { running: true, added: 0, message: "Opening Fillout…", error: "", date };
+  const url = `${FORM_URL}?name=${encodeURIComponent(app.data.name)}`;
+  await invoke("open_fillout", { url, script: buildFillScript(payload, app.data.name) });
+}
+
+function listenForFillStatus() {
+  listen("fill-status", (event) => {
+    let s;
+    try {
+      s = JSON.parse(event.payload);
+    } catch {
+      return;
+    }
+    const date = app.fill.date;
+    if (s.addedIds && s.addedIds.length && date) {
+      timer.markSubmitted(app.data, date, s.addedIds);
+      save();
+    }
+    if (s.error) {
+      app.fill = { ...app.fill, running: false, added: s.added || 0, message: "", error: `Stopped: ${s.error} (${s.added || 0} added)` };
+    } else if (s.done) {
+      app.fill = { ...app.fill, running: false, added: s.added || 0, error: "", message: `Done — ${s.added} entr${s.added === 1 ? "y" : "ies"} added. Review the Fillout window, then click its Submit yourself.` };
+    } else if (s.phase === "waiting-for-form") {
+      app.fill = { ...app.fill, message: "Form loading…" };
+    } else if (s.phase === "name-selected") {
+      app.fill = { ...app.fill, message: "Name selected, adding entries…" };
+    } else if (s.phase === "progress") {
+      app.fill = { ...app.fill, added: s.added, message: `Added ${s.added}…` };
+    }
+  });
+}

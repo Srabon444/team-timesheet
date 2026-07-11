@@ -1,0 +1,104 @@
+/* Theme custom properties — ported from the extension's theme.css, darkened
+   toward the Trackabi look of the reference screenshots. */
+:root {
+  --bg-page: #0f1012;
+  --bg-titlebar: #0a0a0c;
+  --bg-sidebar: #131417;
+  --bg-surface: #1a1c20;
+  --bg-surface-2: #26292f;
+  --bg-surface-hover: #22252b;
+  --border-color: #2b2f36;
+  --text-primary: #e7e9ec;
+  --text-secondary: #c3c8cf;
+  --text-muted: #8b929c;
+  --text-on-accent: #ffffff;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: #60a5fa;
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-light: #f87171;
+  --success: #4ade80;
+  --overlay-bg: rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="light"] {
+  --bg-page: #f8fafc;
+  --bg-titlebar: #e8ecf1;
+  --bg-sidebar: #eef1f5;
+  --bg-surface: #ffffff;
+  --bg-surface-2: #e2e8f0;
+  --bg-surface-hover: #f1f5f9;
+  --border-color: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --text-on-accent: #ffffff;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: #2563eb;
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-light: #dc2626;
+  --success: #16a34a;
+  --overlay-bg: rgba(15, 23, 42, 0.35);
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+body {
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+input, textarea, select { user-select: text; }
+
+h1 { font-size: 22px; margin: 0 0 12px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin: 0 0 10px; }
+.muted { color: var(--text-muted); }
+
+label { display: block; margin: 12px 0 4px; font-size: 13px; color: var(--text-secondary); }
+select, input[type="text"], input[type="time"] {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+select:focus, input:focus { outline: none; border-color: var(--accent); }
+
+.btn {
+  padding: 10px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 14px;
+}
+.btn:hover { background: var(--bg-surface-hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: var(--text-on-accent); }
+.btn.danger:hover { background: var(--danger-hover); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.ghost { background: none; border-color: var(--accent); color: var(--accent-light); border-radius: 999px; }
+.btn.ghost:hover { background: var(--bg-surface-hover); }
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
+
+.mono { font-variant-numeric: tabular-nums; }
+.status-ok { color: var(--success); font-size: 13px; }
+.status-err { color: var(--danger-light); font-size: 13px; }
