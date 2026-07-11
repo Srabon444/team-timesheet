@@ -1,9 +1,14 @@
 name: Release macOS
 
+# Fully automated: any push to this branch that touches desktop/ builds and
+# publishes a new release, tagged with a run-number so it's always unique.
+# After publishing, only the newest macos-v* release+tag is kept — older
+# ones are deleted automatically.
 on:
   push:
-    tags:
-      - "macos-v*"
+    branches: ["desktop-mac"]
+    paths: ["desktop/**", ".github/workflows/release-macos.yml"]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -31,14 +36,18 @@ jobs:
         working-directory: desktop
         run: npm test
 
+      - name: Compute release tag
+        id: tag
+        run: echo "name=macos-v0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop
-          tagName: ${{ github.ref_name }}
-          releaseName: "Team Timesheet ${{ github.ref_name }} (macOS)"
+          tagName: ${{ steps.tag.outputs.name }}
+          releaseName: "Team Timesheet ${{ steps.tag.outputs.name }} (macOS)"
           releaseBody: |
             macOS build: .dmg attached (unsigned — no Apple Developer certificate).
 
@@ -47,3 +56,13 @@ jobs:
             to clear Gatekeeper's quarantine flag.
           releaseDraft: false
           prerelease: false
+
+      - name: Keep only the latest macOS release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --json tagName,createdAt --jq \
+            '[.[] | select(.tagName | startswith("macos-v"))] | sort_by(.createdAt) | .[:-1][].tagName' \
+            | while read -r old; do
+                [ -n "$old" ] && gh release delete "$old" --yes --cleanup-tag
+              done
