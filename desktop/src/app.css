@@ -70,6 +70,21 @@ select, input[type="text"], input[type="time"] {
   font-size: 14px;
 }
 select:focus, input:focus { outline: none; border-color: var(--accent); }
+/* WebKitGTK renders <select> with the native (light) OS widget unless the
+   native appearance is explicitly turned off — that's the white-box/
+   invisible-text bug in dark mode. A CSS arrow replaces the native one. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) center, calc(100% - 13px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 32px;
+}
 
 .btn {
   padding: 10px 16px;

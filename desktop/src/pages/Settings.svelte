@@ -63,10 +63,9 @@
       <div class="setdesc muted">One OS notification when you cross this many hours in a day.</div>
     </div>
     <select class="narrow" bind:value={app.data.dailyLimitHours} onchange={save}>
-      <option value={4}>4 hours</option>
-      <option value={6}>6 hours</option>
-      <option value={8}>8 hours</option>
-      <option value={10}>10 hours</option>
+      {#each Array.from({ length: 12 }, (_, i) => i + 1) as h}
+        <option value={h}>{h} hour{h > 1 ? "s" : ""}</option>
+      {/each}
     </select>
   </div>
   <div class="setrow">
