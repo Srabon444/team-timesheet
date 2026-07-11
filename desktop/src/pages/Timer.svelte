@@ -4,7 +4,7 @@
   import { dayTotal, byCategory } from "../lib/stats.js";
   import {
     app, nav, save, showConfirm,
-    startEntryTimer, pauseEntryTimer, setEntryTime, removeEntry,
+    startEntryTimer, pauseEntryTimer, removeEntry,
     entryElapsed, activeEntry, submitToFillout,
   } from "../lib/store.svelte.js";
   import AddEntryModal from "../components/AddEntryModal.svelte";
@@ -56,11 +56,6 @@
       if (!ok) return;
     }
     removeEntry(selected, entry.id);
-  }
-
-  function onTimeEdit(entry, value) {
-    if (!/^\d{1,2}:\d{2}$/.test(value.trim())) return;
-    setEntryTime(selected, entry.id, value.trim());
   }
 
   async function finalSubmit() {
@@ -138,11 +133,7 @@
               {#if e.submitted}<span class="badge" style:background="var(--accent)">Submitted</span>{/if}
             </div>
           </div>
-          <input
-            class="time mono"
-            value={secToHHMM(entryElapsed(e))}
-            onchange={(ev) => onTimeEdit(e, ev.target.value)}
-          />
+          <span class="time mono">{secToHHMM(entryElapsed(e))}</span>
           {#if selected === today}
             <button class="iconbtn play" onclick={() => (isRunning ? pauseEntryTimer() : startEntryTimer(selected, e.id))}>
               {isRunning ? "❚❚" : "▶"}
@@ -278,7 +269,10 @@
   .row-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row-meta { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
   .proj { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
-  .time { width: 84px; flex: none; text-align: center; padding: 7px 6px; }
+  .time {
+    width: 84px; flex: none; text-align: center; padding: 7px 6px;
+    color: var(--text-secondary); font-size: 14px;
+  }
   .iconbtn {
     width: 34px; height: 34px; flex: none;
     border-radius: 50%; border: 1px solid var(--border-color);
