@@ -1,23 +1,17 @@
-name: Release Linux
+name: Release Windows
 
 on:
   push:
     tags:
-      - "linux-v*"
+      - "windows-v*"
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev libgtk-3-dev \
-            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 
       - uses: actions/setup-node@v4
         with:
@@ -44,7 +38,7 @@ jobs:
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
-          releaseName: "Team Timesheet ${{ github.ref_name }} (Linux)"
-          releaseBody: "Linux build: .deb and .AppImage attached."
+          releaseName: "Team Timesheet ${{ github.ref_name }} (Windows)"
+          releaseBody: "Windows build: .msi and NSIS .exe installers attached."
           releaseDraft: false
           prerelease: false
