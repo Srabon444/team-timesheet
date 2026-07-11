@@ -38,6 +38,13 @@ export const app = $state({
   confirm: null, // { message, yesLabel, resolve }
 });
 
+// Cross-page navigation (e.g. clicking a Timesheet day jumps to it in Timer).
+export const nav = $state({ page: "timer", jumpDate: null });
+export function goToDate(date) {
+  nav.jumpDate = date;
+  nav.page = "timer";
+}
+
 let saveTimer = null;
 export function save() {
   clearTimeout(saveTimer);
@@ -173,15 +180,20 @@ function startTick() {
 }
 
 // ---------- Final Submit (Fillout auto-fill) ----------
+// Always a full resync: the injected script clears whatever is already in
+// the Fillout form for the day, then fills every local entry fresh. That
+// makes re-running Final Submit (e.g. after closing the Fillout window
+// mid-fill) safe and idempotent, instead of relying on partial "pending"
+// tracking that could drift from what's actually in the form.
 export async function submitToFillout(date) {
-  const pending = timer.pendingEntries(app.data, date);
-  if (!pending.length) {
-    app.fill = { running: false, added: 0, message: "", error: "Everything already submitted. Add a new entry to submit more." };
+  const list = timer.entriesFor(app.data, date);
+  if (!list.length) {
+    app.fill = { running: false, added: 0, message: "", error: "No entries to submit for this day." };
     return;
   }
   timer.pauseTimer(app.data); // finalize times before building the payload
   save();
-  const payload = pending.map((e) => ({
+  const payload = list.map((e) => ({
     id: e.id,
     project: e.project,
     category: e.category,
@@ -213,7 +225,9 @@ function listenForFillStatus() {
     } else if (s.phase === "waiting-for-form") {
       app.fill = { ...app.fill, message: "Form loading…" };
     } else if (s.phase === "name-selected") {
-      app.fill = { ...app.fill, message: "Name selected, adding entries…" };
+      app.fill = { ...app.fill, message: "Name selected…" };
+    } else if (s.phase === "clearing-entries") {
+      app.fill = { ...app.fill, message: "Clearing existing entries…" };
     } else if (s.phase === "progress") {
       app.fill = { ...app.fill, added: s.added, message: `Added ${s.added}…` };
     }

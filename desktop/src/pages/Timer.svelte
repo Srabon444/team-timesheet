@@ -3,16 +3,17 @@
   import { todayStr, secToHHMM, secToHHMMSS, secToHMM, hhmmToSec, stripDates, addDays, dayLabel, longDate } from "../lib/time.js";
   import { dayTotal, byCategory } from "../lib/stats.js";
   import {
-    app, save, showConfirm,
+    app, nav, save, showConfirm,
     startEntryTimer, pauseEntryTimer, setEntryTime, removeEntry,
     entryElapsed, activeEntry, submitToFillout,
   } from "../lib/store.svelte.js";
   import AddEntryModal from "../components/AddEntryModal.svelte";
 
-  let selected = $state(todayStr());
-  let anchor = $state(todayStr()); // day-strip window end
+  let selected = $state(nav.jumpDate || todayStr());
+  let anchor = $state(nav.jumpDate || todayStr()); // day-strip window end
+  nav.jumpDate = null;
   let tab = $state("timesheet");
-  let modal = $state(null); // { entry|null, startOnAdd }
+  let modal = $state(null); // { entry|null }
 
   const today = $derived(todayStr());
   const days = $derived(stripDates(anchor));
@@ -29,8 +30,6 @@
     }
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   });
-  const pendingCount = $derived(entries.filter((e) => !e.submitted).length);
-
   function stripTotal(date) {
     void app.now;
     let t = dayTotal(app.data.days[date]);
@@ -47,7 +46,7 @@
       startEntryTimer(selected, entries[entries.length - 1].id); // resume most recent
     } else {
       selected = today;
-      modal = { entry: null, startOnAdd: true };
+      modal = { entry: null };
     }
   }
 
@@ -69,11 +68,12 @@
       app.fill = { ...app.fill, error: "Pick your name first (Settings, or the selector below)." };
       return;
     }
-    const zeros = entries.filter((e) => !e.submitted && entryElapsed(e) < 30).length;
+    const zeros = entries.filter((e) => entryElapsed(e) < 30).length;
     const msg =
-      `Auto-fill ${pendingCount} entr${pendingCount === 1 ? "y" : "ies"} in Fillout?` +
+      `Re-fill Fillout with all ${entries.length} entr${entries.length === 1 ? "y" : "ies"} for this day?` +
+      `\nThis clears any existing entries already in the form, then adds these fresh.` +
       (zeros ? `\n${zeros} have ~00:00 time.` : "") +
-      `\n\nThis fills entries only — the form's own final Submit stays yours to click.`;
+      `\n\nThe form's own final Submit stays yours to click.`;
     if (!(await showConfirm(msg, "Yes, auto-fill"))) return;
     submitToFillout(selected);
   }
@@ -114,7 +114,7 @@
 </div>
 
 <div class="toolbar">
-  <button class="btn ghost" onclick={() => (modal = { entry: null, startOnAdd: selected === today })}>+ Add</button>
+  <button class="btn ghost" onclick={() => (modal = { entry: null })}>+ Add</button>
   <div class="tabs">
     <button class="tabbtn" class:on={tab === "summary"} onclick={() => (tab = "summary")}>▤ Summary</button>
     <button class="tabbtn" class:on={tab === "timesheet"} onclick={() => (tab = "timesheet")}>☰ Timesheet</button>
@@ -148,7 +148,7 @@
               {isRunning ? "❚❚" : "▶"}
             </button>
           {/if}
-          <button class="iconbtn edit" onclick={() => (modal = { entry: e, startOnAdd: false })}>✎</button>
+          <button class="iconbtn edit" onclick={() => (modal = { entry: e })}>✎</button>
           <button class="iconbtn del" onclick={() => del(e)}>✕</button>
         </div>
       {/each}
@@ -191,10 +191,10 @@
       {/each}
       <button
         class="btn primary submit-btn"
-        disabled={app.fill.running || pendingCount === 0 || !app.data.name}
+        disabled={app.fill.running || entries.length === 0 || !app.data.name}
         onclick={finalSubmit}
       >
-        {app.fill.running ? "Filling…" : `Auto-fill ${pendingCount} entr${pendingCount === 1 ? "y" : "ies"} in Fillout`}
+        {app.fill.running ? "Filling…" : `Auto-fill ${entries.length} entr${entries.length === 1 ? "y" : "ies"} in Fillout`}
       </button>
       {#if app.fill.message}<p class="status-ok">{app.fill.message}</p>{/if}
       {#if app.fill.error}<p class="status-err">{app.fill.error}</p>{/if}
@@ -203,7 +203,7 @@
 {/if}
 
 {#if modal}
-  <AddEntryModal date={selected} entry={modal.entry} startOnAdd={modal.startOnAdd} onclose={() => (modal = null)} />
+  <AddEntryModal date={selected} entry={modal.entry} onclose={() => (modal = null)} />
 {/if}
 
 <style>

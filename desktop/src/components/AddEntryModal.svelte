@@ -1,66 +1,113 @@
 <script>
   import { PROJECTS, CATEGORIES } from "../lib/constants.js";
-  import { app, addEntry, updateEntry, startEntryTimer } from "../lib/store.svelte.js";
+  import { todayStr, hhmmToSec } from "../lib/time.js";
+  import {
+    app, addEntry, updateEntry, removeEntry,
+    startEntryTimer, setEntryTime, showConfirm,
+  } from "../lib/store.svelte.js";
 
-  // { date, entry|null (edit mode), startOnAdd } — parent controls visibility.
-  let { date, entry = null, startOnAdd = false, onclose } = $props();
+  // { date, entry|null (edit mode) } — parent controls visibility.
+  let { date, entry = null, onclose } = $props();
 
-  let project = $state(entry ? entry.project : (app.data.lastProject || PROJECTS[0]));
-  let category = $state(entry ? entry.category : (app.data.lastCategory || CATEGORIES[2]));
+  const dayEntries = app.data.days[date] || [];
+  const lastForDay = dayEntries.length ? dayEntries[dayEntries.length - 1] : null;
+  const canStartTimer = date === todayStr();
+
+  // First task of a day starts blank (forces a deliberate pick); once the
+  // day has an entry, later Adds preselect that day's most recent project.
+  let project = $state(entry ? entry.project : (lastForDay ? lastForDay.project : ""));
+  let category = $state(entry ? entry.category : (lastForDay ? lastForDay.category : CATEGORIES[2]));
   let description = $state(entry ? entry.description : "");
+  const startSec = Math.round((entry && entry.accSec) || 0);
+  let hrs = $state(Math.floor(startSec / 3600));
+  let mins = $state(Math.floor((startSec % 3600) / 60));
   let error = $state("");
 
-  function submit() {
+  const hhmm = () => `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+
+  function validate() {
     const desc = description.trim();
-    if (!desc) {
-      error = "Description is required.";
-      return;
+    if (!desc) { error = "Description is required."; return null; }
+    if (!PROJECTS.includes(project)) { error = "Pick a project from the list."; return null; }
+    return desc;
+  }
+
+  function doAdd(start) {
+    const desc = validate();
+    if (!desc) return;
+    const created = addEntry(date, { project, category, description: desc });
+    if (hhmmToSec(hhmm()) > 0) setEntryTime(date, created.id, hhmm());
+    if (start) startEntryTimer(date, created.id);
+    onclose();
+  }
+
+  function doSave() {
+    const desc = validate();
+    if (!desc) return;
+    updateEntry(date, entry.id, { project, category, description: desc });
+    setEntryTime(date, entry.id, hhmm());
+    onclose();
+  }
+
+  async function doDelete() {
+    if (app.data.confirmBeforeDelete !== false) {
+      const ok = await showConfirm("Delete this task entry?", "Yes, delete");
+      if (!ok) return;
     }
-    if (!PROJECTS.includes(project)) {
-      error = "Pick a project from the list.";
-      return;
-    }
-    if (entry) {
-      updateEntry(date, entry.id, { project, category, description: desc });
-    } else {
-      const created = addEntry(date, { project, category, description: desc });
-      if (startOnAdd) startEntryTimer(date, created.id);
-    }
+    removeEntry(date, entry.id);
     onclose();
   }
 
   function onkeydown(e) {
     if (e.key === "Escape") onclose();
-    if (e.key === "Enter" && e.target.tagName !== "SELECT") submit();
   }
 </script>
 
 <div class="overlay" role="dialog" onkeydown={onkeydown}>
   <div class="box">
-    <h3>{entry ? "Edit task" : "Add task"}</h3>
-
-    <label for="proj">Project</label>
-    <input id="proj" list="projects" bind:value={project} placeholder="Type to search…" />
-    <datalist id="projects">
-      {#each PROJECTS as p}<option value={p}></option>{/each}
-    </datalist>
+    <h3>{entry ? "Task Details" : "Add task"}</h3>
 
     <label for="cat">Work Category</label>
     <select id="cat" bind:value={category}>
       {#each CATEGORIES as c}<option value={c}>{c}</option>{/each}
     </select>
 
+    <label for="proj">Project</label>
+    <input id="proj" list="projects" bind:value={project} placeholder="Pick a project…" />
+    <datalist id="projects">
+      {#each PROJECTS as p}<option value={p}></option>{/each}
+    </datalist>
+
     <label for="desc">Description <span class="req">*</span></label>
     <!-- svelte-ignore a11y_autofocus -->
     <input id="desc" type="text" bind:value={description} placeholder="What are you working on?" autofocus />
 
+    <label>Time Clocked</label>
+    <div class="timepick">
+      <select bind:value={hrs} aria-label="Hours">
+        {#each Array.from({ length: 24 }, (_, h) => h) as h}<option value={h}>{String(h).padStart(2, "0")} hrs</option>{/each}
+      </select>
+      <span class="colon">:</span>
+      <select bind:value={mins} aria-label="Minutes">
+        {#each Array.from({ length: 60 }, (_, m) => m) as m}<option value={m}>{String(m).padStart(2, "0")} min</option>{/each}
+      </select>
+    </div>
+    {#if !entry}<p class="muted small">Leave 00:00 to start a live timer instead.</p>{/if}
+
     {#if error}<p class="status-err">{error}</p>{/if}
 
     <div class="actions">
-      <button class="btn" onclick={onclose}>Cancel</button>
-      <button class="btn primary" onclick={submit}>
-        {entry ? "Save changes" : startOnAdd ? "Add & start timer" : "Add task"}
-      </button>
+      {#if entry}
+        <button class="btn danger" onclick={doDelete}>Delete</button>
+        <button class="btn" onclick={onclose}>Cancel</button>
+        <button class="btn primary" onclick={doSave}>Save</button>
+      {:else}
+        <button class="btn" onclick={onclose}>Cancel</button>
+        <button class="btn" onclick={() => doAdd(false)}>Add</button>
+        {#if canStartTimer}
+          <button class="btn primary" onclick={() => doAdd(true)}>Add & Start Timer</button>
+        {/if}
+      {/if}
     </div>
   </div>
 </div>
@@ -81,6 +128,10 @@
   }
   h3 { margin: 0 0 6px; font-size: 17px; }
   .req { color: var(--danger-light); }
+  .timepick { display: flex; align-items: center; gap: 8px; }
+  .timepick select { flex: 1; width: auto; }
+  .colon { color: var(--text-muted); font-weight: 700; }
+  .small { font-size: 12.5px; margin-top: 6px; }
   .actions { display: flex; gap: 10px; margin-top: 18px; }
   .actions .btn { flex: 1; }
 </style>

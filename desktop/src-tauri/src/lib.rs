@@ -77,7 +77,9 @@ fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), Strin
     } else {
         WebviewWindowBuilder::new(&app, "fillout", WebviewUrl::External(parsed))
             .title("Fillout — review, then click the form's own Submit")
-            .inner_size(1150.0, 850.0)
+            .inner_size(1320.0, 880.0)
+            .min_inner_size(1000.0, 700.0)
+            .resizable(true)
             .build()
             .map_err(|e| e.to_string())?;
     }
@@ -90,17 +92,32 @@ fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), Strin
 /// zero extra security surface.
 fn start_title_poll(app: AppHandle) {
     std::thread::spawn(move || {
+        // Last "added" count seen, so a window closed mid-fill can still
+        // report an accurate count when it disappears.
+        let mut last_added = 0i64;
         // ~10 min hard cap so an injection that dies silently can't leave
         // this thread spinning forever.
         for _ in 0..1500 {
             std::thread::sleep(std::time::Duration::from_millis(400));
             let Some(win) = app.get_webview_window("fillout") else {
-                break; // window closed
+                // The user closed the Fillout window mid-fill (or intentionally).
+                // Tell the main window so it drops out of "Filling…" and lets
+                // Final Submit be clicked again, instead of hanging forever.
+                let payload = serde_json::json!({
+                    "error": "Fillout window was closed",
+                    "added": last_added
+                })
+                .to_string();
+                let _ = app.emit_to("main", "fill-status", payload);
+                break;
             };
             let Ok(title) = win.title() else { break };
             if let Some(rest) = title.strip_prefix("TT_STATE:") {
                 let _ = app.emit_to("main", "fill-status", rest.to_string());
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) {
+                    if let Some(a) = v.get("added").and_then(|a| a.as_i64()) {
+                        last_added = a;
+                    }
                     let done = v.get("done").and_then(|d| d.as_bool()) == Some(true);
                     if done || v.get("error").is_some() {
                         break;

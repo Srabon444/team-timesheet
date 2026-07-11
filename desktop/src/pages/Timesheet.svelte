@@ -3,7 +3,7 @@
   import { todayStr, secToHHMM, secToHMM, dayLabel } from "../lib/time.js";
   import { mondayOf, weekDates, dayTotal } from "../lib/stats.js";
   import { addDays, longDate } from "../lib/time.js";
-  import { app } from "../lib/store.svelte.js";
+  import { app, goToDate } from "../lib/store.svelte.js";
 
   let monday = $state(mondayOf(todayStr()));
   const dates = $derived(weekDates(monday));
@@ -23,7 +23,7 @@
 
 {#each dates as d}
   {@const entries = app.data.days[d] || []}
-  <section class="day" class:istoday={d === today}>
+  <section class="day" class:istoday={d === today} onclick={() => goToDate(d)} role="button" tabindex="0">
     <header>
       <span class="dlabel">{dayLabel(d).dow} <span class="muted">{dayLabel(d).md}</span>
         {#if d === today}<span class="today">Today</span>{/if}
@@ -59,7 +59,9 @@
     border-radius: 10px;
     padding: 12px 16px;
     margin-bottom: 10px;
+    cursor: pointer;
   }
+  .day:hover { background: var(--bg-surface-hover); }
   .day.istoday { border-color: var(--accent); }
   .day header { display: flex; justify-content: space-between; align-items: center; }
   .dlabel { font-weight: 700; font-size: 14px; }

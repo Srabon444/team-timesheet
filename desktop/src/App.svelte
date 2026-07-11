@@ -1,6 +1,6 @@
 <script>
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { app, load } from "./lib/store.svelte.js";
+  import { app, nav, load } from "./lib/store.svelte.js";
   import Confirm from "./components/Confirm.svelte";
   import Timer from "./pages/Timer.svelte";
   import Timesheet from "./pages/Timesheet.svelte";
@@ -8,7 +8,6 @@
   import Reports from "./pages/Reports.svelte";
   import Settings from "./pages/Settings.svelte";
 
-  let page = $state("timer");
   const win = getCurrentWindow();
 
   load();
@@ -38,12 +37,12 @@
         <span>Team Timesheet</span>
       </div>
       {#each NAV as [id, label, icon]}
-        <button class="nav" class:active={page === id} onclick={() => (page = id)}>
+        <button class="nav" class:active={nav.page === id} onclick={() => (nav.page = id)}>
           <span class="nav-icon">{icon}</span>{label}
         </button>
       {/each}
       <div class="spacer"></div>
-      <button class="nav" class:active={page === "settings"} onclick={() => (page = "settings")}>
+      <button class="nav" class:active={nav.page === "settings"} onclick={() => (nav.page = "settings")}>
         <span class="nav-icon">⚙</span>Settings
       </button>
       <div class="you">
@@ -54,11 +53,11 @@
 
     <main class="content">
       {#if app.loaded}
-        {#if page === "timer"}<Timer />{/if}
-        {#if page === "timesheet"}<Timesheet />{/if}
-        {#if page === "projects"}<Projects />{/if}
-        {#if page === "reports"}<Reports />{/if}
-        {#if page === "settings"}<Settings />{/if}
+        {#if nav.page === "timer"}<Timer />{/if}
+        {#if nav.page === "timesheet"}<Timesheet />{/if}
+        {#if nav.page === "projects"}<Projects />{/if}
+        {#if nav.page === "reports"}<Reports />{/if}
+        {#if nav.page === "settings"}<Settings />{/if}
       {/if}
     </main>
   </div>
