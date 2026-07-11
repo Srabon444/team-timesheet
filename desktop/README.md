@@ -15,16 +15,16 @@ Fixes land on `desktop-linux`, then merge into the other two.
 | `desktop-windows` | `.msi`, `.exe` | `windows-v*` |
 | `desktop-mac` | `.dmg` | `macos-v*` |
 
-## Release (all 3 OS)
+## Release (all 3 OS) — fully automatic
 
-Push a tag — GitHub Actions builds on the matching OS runner and attaches
-installers to a GitHub Release automatically:
+No manual tagging. Any push to a `desktop-*` branch that touches `desktop/`
+builds on the matching OS runner and publishes a GitHub Release tagged
+`<os>-v0.1.<run-number>`. Each run also deletes every older release+tag for
+that OS, so only the latest installer is ever kept.
 
-```bash
-git tag linux-v0.1.0 desktop-linux && git push origin linux-v0.1.0
-git tag windows-v0.1.0 desktop-windows && git push origin windows-v0.1.0
-git tag macos-v0.1.0 desktop-mac && git push origin macos-v0.1.0
-```
+Trigger one manually (no code change needed) from the **Actions** tab →
+pick the `Release Linux` / `Release Windows` / `Release macOS` workflow →
+**Run workflow**.
 
 Installers appear under the repo's **Releases** page a few minutes later.
 
