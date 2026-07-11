@@ -27,6 +27,24 @@ async function runner(entries, name) {
       window.__ttKeep = setInterval(() => { document.title = str; }, 500);
     } catch {}
   };
+  // Visible on-page feedback — document.title changes aren't seen by the
+  // user directly, only polled by the app, so completion/failure also gets
+  // a banner inside the Fillout window itself.
+  const banner = (text, ok) => {
+    try {
+      let el = document.getElementById("__tt_banner");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "__tt_banner";
+        el.style.cssText =
+          "position:fixed;top:0;left:0;right:0;z-index:999999;padding:10px 16px;" +
+          "font:600 13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;text-align:center;color:#fff;";
+        document.body.appendChild(el);
+      }
+      el.style.background = ok ? "#16a34a" : "#dc2626";
+      el.textContent = text;
+    } catch {}
+  };
   const waitFor = async (fn, t = 15000) => {
     const s0 = Date.now();
     while (Date.now() - s0 < t) {
@@ -38,7 +56,35 @@ async function runner(entries, name) {
   const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
   let added = 0;
   const addedIds = [];
-  const fail = (msg) => report({ error: msg, added, addedIds });
+  const fail = (msg) => {
+    banner("✗ Stopped: " + msg, false);
+    report({ error: msg, added, addedIds });
+  };
+
+  // Delete whatever is already in the top-level "Timesheet Entries" list for
+  // this Name+Date before filling, so re-running Final Submit (e.g. after
+  // closing the window mid-fill) is a clean resync instead of piling up
+  // duplicates. Best-effort: an aria-label is tried first; if the form's
+  // markup doesn't match either heuristic, this quietly gives up and the
+  // fill proceeds without clearing rather than risking a wrong click.
+  const clearExistingEntries = async () => {
+    for (let i = 0; i < 40; i++) {
+      const editEl = [...document.querySelectorAll("a,button,[role=button]")]
+        .find((n) => /^edit$/i.test(norm(n.textContent)) && n.offsetParent !== null);
+      if (!editEl) return;
+      let del = document.querySelector('button[aria-label*="delete" i],button[aria-label*="remove" i]');
+      if (!del) {
+        const siblings = [...(editEl.parentElement ? editEl.parentElement.querySelectorAll("a,button,[role=button]") : [])]
+          .filter((n) => n.offsetParent !== null);
+        del = siblings.find((n) => n !== editEl && norm(n.textContent) === "");
+      }
+      if (!del) return; // couldn't identify a delete control — leave the list as-is
+      for (const t of ["pointerdown", "mousedown", "mouseup", "click"]) {
+        del.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
+      }
+      await sleep(500);
+    }
+  };
 
   // react-select: type the value into the combobox input, synthetic Enter.
   // Same as a human using its built-in search — verified against this exact
@@ -91,6 +137,9 @@ async function runner(entries, name) {
       .find((e) => norm(e.textContent) === name);
     if (!already) await selectReact(document, window, "Name", name);
     report({ phase: "name-selected", added });
+
+    report({ phase: "clearing-entries", added });
+    await clearExistingEntries();
 
     for (const e of entries) {
       const createBtn = await waitFor(() => {
@@ -145,6 +194,7 @@ async function runner(entries, name) {
       report({ phase: "progress", added, addedIds });
     }
 
+    banner("✓ Added " + added + " entr" + (added === 1 ? "y" : "ies") + ". Review them, then click the form's Submit yourself.", true);
     report({ done: true, added, addedIds });
   } catch (err) {
     fail(err && err.message ? err.message : String(err));
