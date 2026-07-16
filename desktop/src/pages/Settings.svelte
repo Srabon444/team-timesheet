@@ -16,6 +16,55 @@
     fetching = false;
   }
 
+  // ---- Backup / transfer (Task 1: manual export/paste bridge) ----
+  // A small versioned envelope holding just the portable data (days + name).
+  // Device-local bits (timer, theme, limit) stay out on purpose. The same
+  // text pastes into the Chrome extension's Import box.
+  const exportText = $derived(
+    JSON.stringify(
+      { app: "team-timesheet", v: 1, exportedAt: Date.now(), name: app.data.name, days: app.data.days },
+      null, 2
+    )
+  );
+  let importText = $state("");
+  let ioMsg = $state("");
+
+  async function copyExport() {
+    try {
+      await navigator.clipboard.writeText(exportText);
+      ioMsg = "Copied to clipboard.";
+    } catch {
+      ioMsg = "Copy failed — select the text above and copy manually.";
+    }
+  }
+
+  async function doImport() {
+    ioMsg = "";
+    let obj;
+    try {
+      obj = JSON.parse(importText);
+    } catch {
+      ioMsg = "That's not valid JSON.";
+      return;
+    }
+    if (!obj || typeof obj.days !== "object" || obj.days === null) {
+      ioMsg = "No 'days' data found in that text.";
+      return;
+    }
+    const n = Object.keys(obj.days).length;
+    const ok = await showConfirm(
+      `Replace all tracked data with this import (${n} day${n === 1 ? "" : "s"})? Your current data is overwritten.`,
+      "Yes, import"
+    );
+    if (!ok) return;
+    app.data.days = obj.days;
+    if (obj.name && !app.data.name) app.data.name = obj.name;
+    app.data.timer = { activeId: null, startedAt: null, date: null }; // never import a running timer
+    save();
+    importText = "";
+    ioMsg = `Imported ${n} day${n === 1 ? "" : "s"}.`;
+  }
+
   async function resetEverything() {
     const ok = await showConfirm(
       "Delete all tasks, history, and settings? This cannot be undone. Your name is kept.",
@@ -88,6 +137,22 @@
   </div>
 </section>
 
+<section>
+  <h2>Backup &amp; transfer</h2>
+  <p class="muted small">Export your tracked data, or paste a backup to restore it.
+    The same text imports into the Chrome extension.</p>
+
+  <div class="setlbl">Export</div>
+  <textarea class="io" readonly rows="4" value={exportText}></textarea>
+  <button class="btn" onclick={copyExport}>Copy to clipboard</button>
+
+  <div class="setlbl mt">Import</div>
+  <textarea class="io" rows="4" bind:value={importText} placeholder="Paste exported data here…"></textarea>
+  <button class="btn primary" onclick={doImport} disabled={!importText.trim()}>Import</button>
+
+  {#if ioMsg}<p class="muted small">{ioMsg}</p>{/if}
+</section>
+
 <section class="danger">
   <div class="setrow">
     <div>
@@ -108,8 +173,16 @@
     padding: 14px 0; border-bottom: 1px solid var(--border-color);
   }
   .setlbl { font-size: 14.5px; font-weight: 600; }
+  .setlbl.mt { margin-top: 16px; }
   .setdesc { font-size: 12.5px; margin-top: 3px; }
   .narrow { width: 130px; }
+  .io {
+    width: 100%; margin: 8px 0; padding: 10px 12px;
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: 8px; color: var(--text-primary);
+    font: 12px/1.4 ui-monospace, monospace; resize: vertical;
+  }
+  .io:focus { outline: none; border-color: var(--accent); }
   .toggle { width: 20px; height: 20px; accent-color: var(--accent); }
   .themes { display: flex; gap: 10px; }
   .danger { border: 1px solid var(--danger); border-radius: 10px; padding: 4px 16px; }

@@ -18,6 +18,7 @@ import { buildFillScript } from "./fillout-inject.js";
 function defaults() {
   return {
     days: {},
+    submittedDays: {}, // { date: { at: ts, method: "auto"|"manual" } } — show-only
     timer: { activeId: null, startedAt: null, date: null },
     name: "",
     names: [],
@@ -120,6 +121,20 @@ export function activeEntry() {
   return timer.entriesFor(app.data, date).find((e) => e.id === activeId) || null;
 }
 
+// ---------- submission status (Task 7: show-only, disables nothing) ----------
+export function markDaySubmitted(date, method = "manual") {
+  if (!app.data.submittedDays) app.data.submittedDays = {};
+  app.data.submittedDays[date] = { at: Date.now(), method };
+  save();
+}
+export function unmarkDaySubmitted(date) {
+  if (app.data.submittedDays) delete app.data.submittedDays[date];
+  save();
+}
+export function daySubmitted(date) {
+  return app.data.submittedDays ? app.data.submittedDays[date] : null;
+}
+
 // ---------- confirm modal (promise-based, per-action Yes label) ----------
 export function showConfirm(message, yesLabel = "Yes") {
   return new Promise((resolve) => {
@@ -217,6 +232,12 @@ function listenForFillStatus() {
     if (s.addedIds && s.addedIds.length && date) {
       timer.markSubmitted(app.data, date, s.addedIds);
       save();
+    }
+    if (s.submittedConfirmed) {
+      // A real form submission was detected after filling.
+      if (date) markDaySubmitted(date, "auto");
+      app.fill = { ...app.fill, running: false, error: "", message: "Submission detected — recorded for this day ✓" };
+      return;
     }
     if (s.error) {
       app.fill = { ...app.fill, running: false, added: s.added || 0, message: "", error: `Stopped: ${s.error} (${s.added || 0} added)` };

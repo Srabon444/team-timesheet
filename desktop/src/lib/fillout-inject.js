@@ -235,6 +235,32 @@ async function runner(entries, name) {
       (clearWarning ? " ⚠ " + clearWarning : "");
     banner(doneMsg, !clearWarning);
     report({ done: true, added, addedIds, warning: clearWarning || undefined });
+
+    // Task 7: after filling, keep watching for the user actually submitting
+    // the form, so the app can record a REAL submission (not just that we
+    // filled it). Best-effort heuristic — the manual "Mark submitted" toggle
+    // in the app is the fallback when the form's success markup doesn't match.
+    const looksSubmitted = () => {
+      const txt = norm(document.body.innerText).toLowerCase();
+      const successText = /(thank you|response (has been )?recorded|submission received|your response has|successfully submitted|form submitted|has been submitted)/.test(txt);
+      const createGone = ![...document.querySelectorAll("button,[role=button],a,div,span")]
+        .some((n) => norm(n.textContent) === "Create" && n.offsetParent !== null);
+      const submitGone = ![...document.querySelectorAll("button,[role=button]")]
+        .some((b) => norm(b.textContent) === "Submit" && b.offsetParent !== null);
+      // Require the success text AND the form controls to be gone, so a stray
+      // "thank you" elsewhere on the page can't trigger a false positive.
+      return successText && createGone && submitGone;
+    };
+    if (window.__ttWatch) clearInterval(window.__ttWatch);
+    window.__ttWatch = setInterval(() => {
+      try {
+        if (looksSubmitted()) {
+          clearInterval(window.__ttWatch);
+          banner("✓ Submission detected — recorded in the app.", true);
+          report({ submittedConfirmed: true, added, addedIds });
+        }
+      } catch {}
+    }, 1500);
   } catch (err) {
     fail(err && err.message ? err.message : String(err));
   }
