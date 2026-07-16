@@ -14,6 +14,12 @@ Fixes land on `desktop-linux`, then merge into the other two.
 | `desktop-linux` | `.deb`, `.AppImage` | `linux-v*` |
 | `desktop-windows` | `.msi`, `.exe` | `windows-v*` |
 | `desktop-mac` | `.dmg` | `macos-v*` |
+| `desktop-android` | `.apk` (debug) | `android-v*` |
+
+**Android note:** the app is the full tracker, mobile-responsive. Auto-fill
+is desktop-only (mobile is single-window), so on Android **Final Submit opens
+the Fillout form in your browser** for manual entry. Install the APK via
+"unknown sources".
 
 ## Release (all 3 OS) — fully automatic
 

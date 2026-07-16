@@ -177,6 +177,7 @@ fn start_title_poll(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(FilloutState(Mutex::new(None)))
         .on_page_load(|webview, payload| {
             if webview.label() != "fillout" {

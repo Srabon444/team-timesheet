@@ -3,6 +3,7 @@
 // is saved and the UI stays live.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   isPermissionGranted,
   requestPermission,
@@ -215,9 +216,23 @@ export async function submitToFillout(date) {
     description: e.description,
     hhmm: secToHHMM(e.accSec || 0),
   }));
-  app.fill = { running: true, added: 0, message: "Opening Fillout…", error: "", date };
   const url = `${FORM_URL}?name=${encodeURIComponent(app.data.name)}`;
+  // Android/mobile is single-window, so the in-app auto-fill window (which
+  // needs a second webview) can't run there. Open the form in the device
+  // browser for manual entry instead; auto-fill stays a desktop feature.
+  if (isMobile()) {
+    app.fill = { running: false, added: 0, error: "", message: "Opened the form in your browser — fill it in there, then Submit.", date };
+    try { await openUrl(url); } catch (e) {
+      app.fill = { ...app.fill, message: "", error: `Could not open the browser: ${e.message || e}` };
+    }
+    return;
+  }
+  app.fill = { running: true, added: 0, message: "Opening Fillout…", error: "", date };
   await invoke("open_fillout", { url, script: buildFillScript(payload, app.data.name) });
+}
+
+function isMobile() {
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
 
 function listenForFillStatus() {

@@ -1,0 +1,101 @@
+name: Release Android
+
+# Fully automated: any push to this branch that touches desktop/ builds a
+# debug APK (installable via "unknown sources") and publishes it, keeping
+# only the latest android-v* release. Tauri's Android project is generated
+# on the runner (`tauri android init`) — it's gitignored, not committed.
+#
+# NOTE: Android auto-fill isn't supported (Tauri mobile is single-window, so
+# the in-app Fillout window can't run). On Android, Final Submit opens the
+# form in the device browser for manual entry.
+on:
+  push:
+    branches: ["desktop-android"]
+    paths: ["desktop/**", ".github/workflows/release-android.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      NDK_VERSION: "26.1.10909125"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          sdkmanager "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm install
+
+      - name: Run tests
+        working-directory: desktop
+        run: npm test
+
+      - name: Build Android APK (debug, arm64)
+        working-directory: desktop
+        run: |
+          npm run tauri android init -- --ci
+          npm run tauri android build -- --debug --apk --target aarch64
+
+      - name: Locate APK
+        id: apk
+        run: |
+          APK=$(find desktop/src-tauri/gen/android -name "*.apk" | head -n1)
+          if [ -z "$APK" ]; then echo "No APK found"; exit 1; fi
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "Found: $APK"
+
+      - name: Compute release tag
+        id: tag
+        run: |
+          echo "tag=android-v0.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "name=v0.0.${{ github.run_number }} (Android)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.name }}
+          body: |
+            Android debug APK (arm64). Install via "unknown sources".
+            Auto-fill is desktop-only — on Android, Final Submit opens the
+            Fillout form in your browser for manual entry.
+          files: ${{ steps.apk.outputs.path }}
+          draft: false
+          prerelease: false
+
+      - name: Keep only the latest Android release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --json tagName,createdAt --jq \
+            '[.[] | select(.tagName | startswith("android-v"))] | sort_by(.createdAt) | .[:-1][].tagName' \
+            | while read -r old; do
+                [ -n "$old" ] && gh release delete "$old" --yes --cleanup-tag
+              done

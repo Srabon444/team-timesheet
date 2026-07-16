@@ -124,4 +124,20 @@
   .you-name { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .content { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 26px; }
+
+  /* Mobile / narrow (Android): no OS window chrome, sidebar becomes a
+     horizontal top nav, content goes full width. */
+  @media (max-width: 640px) {
+    .titlebar { display: none; }
+    .body { flex-direction: column; }
+    .sidebar {
+      width: 100%; flex-direction: row; align-items: center;
+      overflow-x: auto; height: auto; gap: 4px;
+      padding: 6px 8px;
+      border-right: none; border-bottom: 1px solid var(--border-color);
+    }
+    .brand, .spacer, .you { display: none; }
+    .nav { flex: none; white-space: nowrap; padding: 9px 12px; }
+    .content { padding: 14px 14px; }
+  }
 </style>
