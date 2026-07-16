@@ -3,11 +3,12 @@
   import { todayStr, hhmmToSec } from "../lib/time.js";
   import {
     app, addEntry, updateEntry, removeEntry,
-    startEntryTimer, setEntryTime, showConfirm,
+    startEntryTimer, setEntryTime, entryElapsed, showConfirm,
   } from "../lib/store.svelte.js";
 
-  // { date, entry|null (edit mode) } — parent controls visibility.
-  let { date, entry = null, onclose } = $props();
+  // { date, entry|null (edit mode), presetProject, presetCategory } — parent
+  // controls visibility. Presets come from the header timer's hover menu.
+  let { date, entry = null, presetProject = "", presetCategory = "", onclose } = $props();
 
   const dayEntries = app.data.days[date] || [];
   const lastForDay = dayEntries.length ? dayEntries[dayEntries.length - 1] : null;
@@ -15,15 +16,20 @@
 
   // First task of a day starts blank (forces a deliberate pick); once the
   // day has an entry, later Adds preselect that day's most recent project.
-  let project = $state(entry ? entry.project : (lastForDay ? lastForDay.project : ""));
-  let category = $state(entry ? entry.category : (lastForDay ? lastForDay.category : CATEGORIES[2]));
+  // A preset (hover-menu pick) wins over both.
+  let project = $state(entry ? entry.project : (presetProject || (lastForDay ? lastForDay.project : "")));
+  let category = $state(entry ? entry.category : (presetCategory || (lastForDay ? lastForDay.category : CATEGORIES[2])));
   let description = $state(entry ? entry.description : "");
-  const startSec = Math.round((entry && entry.accSec) || 0);
+  // Seed from the entry's LIVE elapsed (not just accSec), so editing a
+  // running task shows the real running time — the fix for elapsed getting
+  // reset when you edit a task mid-run.
+  const startSec = Math.round(entry ? entryElapsed(entry) : 0);
   let hrs = $state(Math.floor(startSec / 3600));
   let mins = $state(Math.floor((startSec % 3600) / 60));
   let error = $state("");
 
   const hhmm = () => `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+  const initHHMM = hhmm(); // to detect whether the user actually changed the time
 
   function validate() {
     const desc = description.trim();
@@ -45,7 +51,10 @@
     const desc = validate();
     if (!desc) return;
     updateEntry(date, entry.id, { project, category, description: desc });
-    setEntryTime(date, entry.id, hhmm());
+    // Only rewrite the time if it was actually changed — otherwise a running
+    // timer would be reset to the (minute-truncated) displayed value on every
+    // edit of project/category/description.
+    if (hhmm() !== initHHMM) setEntryTime(date, entry.id, hhmm());
     onclose();
   }
 
@@ -67,11 +76,6 @@
   <div class="box">
     <h3>{entry ? "Task Details" : "Add task"}</h3>
 
-    <label for="cat">Work Category</label>
-    <select id="cat" bind:value={category}>
-      {#each CATEGORIES as c}<option value={c}>{c}</option>{/each}
-    </select>
-
     <label for="proj">Project</label>
     <div class="proj-wrap">
       <input id="proj" type="text" list="projects" bind:value={project} placeholder="Pick a project…" />
@@ -82,6 +86,11 @@
     <datalist id="projects">
       {#each PROJECTS as p}<option value={p}></option>{/each}
     </datalist>
+
+    <label for="cat">Work Category</label>
+    <select id="cat" bind:value={category}>
+      {#each CATEGORIES as c}<option value={c}>{c}</option>{/each}
+    </select>
 
     <label for="desc">Description <span class="req">*</span></label>
     <!-- svelte-ignore a11y_autofocus -->

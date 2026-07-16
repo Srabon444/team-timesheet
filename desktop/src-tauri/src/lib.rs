@@ -90,37 +90,82 @@ fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), Strin
 /// progress by writing `TT_STATE:{json}` into document.title. Poll that and
 /// relay to the main window as "fill-status" events. Engine-agnostic and
 /// zero extra security surface.
+enum Poll {
+    Gone,
+    Title(String),
+}
+
+/// Read the fillout window's title on the MAIN thread. On Windows, WebView2
+/// has UI-thread affinity — calling `.title()` from a background thread can
+/// hang the whole app (observed as a freeze on Win11 right after Final
+/// Submit, while Win10 tolerated it). Marshaling every read through the main
+/// thread avoids that; it's harmless on Linux/macOS.
+fn poll_fillout_title(app: &AppHandle) -> Poll {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app2 = app.clone();
+    let dispatched = app.run_on_main_thread(move || {
+        let msg = match app2.get_webview_window("fillout") {
+            Some(w) => match w.title() {
+                Ok(t) => Poll::Title(t),
+                Err(_) => Poll::Gone,
+            },
+            None => Poll::Gone,
+        };
+        let _ = tx.send(msg);
+    });
+    if dispatched.is_err() {
+        return Poll::Gone;
+    }
+    rx.recv_timeout(std::time::Duration::from_millis(1500))
+        .unwrap_or(Poll::Gone)
+}
+
 fn start_title_poll(app: AppHandle) {
     std::thread::spawn(move || {
         // Last "added" count seen, so a window closed mid-fill can still
         // report an accurate count when it disappears.
         let mut last_added = 0i64;
-        // ~10 min hard cap so an injection that dies silently can't leave
-        // this thread spinning forever.
-        for _ in 0..1500 {
+        let mut last_emitted = String::new();
+        // ~30 min cap: long enough for the user to review the filled form and
+        // actually click its Submit, so a real submission can be auto-detected
+        // (Task 7), without leaving the thread spinning forever.
+        for _ in 0..4500 {
             std::thread::sleep(std::time::Duration::from_millis(400));
-            let Some(win) = app.get_webview_window("fillout") else {
-                // The user closed the Fillout window mid-fill (or intentionally).
-                // Tell the main window so it drops out of "Filling…" and lets
-                // Final Submit be clicked again, instead of hanging forever.
-                let payload = serde_json::json!({
-                    "error": "Fillout window was closed",
-                    "added": last_added
-                })
-                .to_string();
-                let _ = app.emit_to("main", "fill-status", payload);
-                break;
-            };
-            let Ok(title) = win.title() else { break };
-            if let Some(rest) = title.strip_prefix("TT_STATE:") {
-                let _ = app.emit_to("main", "fill-status", rest.to_string());
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) {
-                    if let Some(a) = v.get("added").and_then(|a| a.as_i64()) {
-                        last_added = a;
+            match poll_fillout_title(&app) {
+                Poll::Gone => {
+                    // Window closed (mid-fill or intentionally). Tell the main
+                    // window so it drops out of "Filling…" and lets Final
+                    // Submit run again, instead of hanging forever.
+                    let payload = serde_json::json!({
+                        "error": "Fillout window was closed",
+                        "added": last_added
+                    })
+                    .to_string();
+                    let _ = app.emit_to("main", "fill-status", payload);
+                    break;
+                }
+                Poll::Title(title) => {
+                    let Some(rest) = title.strip_prefix("TT_STATE:") else {
+                        continue;
+                    };
+                    if rest == last_emitted {
+                        continue; // keep-alive re-write of an unchanged state
                     }
-                    let done = v.get("done").and_then(|d| d.as_bool()) == Some(true);
-                    if done || v.get("error").is_some() {
-                        break;
+                    last_emitted = rest.to_string();
+                    let _ = app.emit_to("main", "fill-status", rest.to_string());
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) {
+                        if let Some(a) = v.get("added").and_then(|a| a.as_i64()) {
+                            last_added = a;
+                        }
+                        // Stop only on a hard error or a CONFIRMED real
+                        // submission. A plain "done" (auto-fill finished) is
+                        // not a stop — keep watching so the later real Submit
+                        // is caught.
+                        let confirmed =
+                            v.get("submittedConfirmed").and_then(|d| d.as_bool()) == Some(true);
+                        if confirmed || v.get("error").is_some() {
+                            break;
+                        }
                     }
                 }
             }

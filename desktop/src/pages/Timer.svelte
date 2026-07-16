@@ -1,11 +1,12 @@
 <script>
-  import { categoryColor, projectColor } from "../lib/constants.js";
+  import { categoryColor, projectColor, PROJECTS, CATEGORIES } from "../lib/constants.js";
   import { todayStr, secToHHMM, secToHHMMSS, secToHMM, hhmmToSec, stripDates, addDays, dayLabel, longDate } from "../lib/time.js";
   import { dayTotal, byCategory } from "../lib/stats.js";
   import {
     app, nav, save, showConfirm,
     startEntryTimer, pauseEntryTimer, removeEntry,
     entryElapsed, activeEntry, submitToFillout,
+    markDaySubmitted, unmarkDaySubmitted, daySubmitted,
   } from "../lib/store.svelte.js";
   import AddEntryModal from "../components/AddEntryModal.svelte";
 
@@ -13,7 +14,16 @@
   let anchor = $state(nav.jumpDate || todayStr()); // day-strip window end
   nav.jumpDate = null;
   let tab = $state("timesheet");
-  let modal = $state(null); // { entry|null }
+  let modal = $state(null); // { entry|null, presetProject?, presetCategory? }
+  let menuOpen = $state(false);      // header-timer hover menu
+  let hoveredProject = $state(null); // which project's category submenu is open
+
+  function openPreset(p, c) {
+    selected = today;
+    menuOpen = false;
+    hoveredProject = null;
+    modal = { entry: null, presetProject: p, presetCategory: c };
+  }
 
   const today = $derived(todayStr());
   const days = $derived(stripDates(anchor));
@@ -30,6 +40,8 @@
     }
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   });
+  const selSubmitted = $derived(daySubmitted(selected));
+
   function stripTotal(date) {
     void app.now;
     let t = dayTotal(app.data.days[date]);
@@ -75,7 +87,34 @@
 </script>
 
 <div class="timer-head">
-  <div class="big mono">{running ? secToHHMMSS(entryElapsed(running)) : "00:00:00"}</div>
+  <!-- Hovering the big timer reveals a project → category quick-add menu. -->
+  <div class="big-wrap"
+       role="button" tabindex="0"
+       onmouseenter={() => (menuOpen = true)}
+       onmouseleave={() => { menuOpen = false; hoveredProject = null; }}>
+    <div class="big mono">{running ? secToHHMMSS(entryElapsed(running)) : "00:00:00"}</div>
+    {#if menuOpen}
+      <div class="proj-menu">
+        <div class="pm-head muted">Quick add</div>
+        {#each PROJECTS as p}
+          <div class="pm-row" onmouseenter={() => (hoveredProject = p)}>
+            <span class="dot" style:background={projectColor(p)}></span>
+            <span class="pm-name">{p}</span>
+            <span class="chev">›</span>
+            {#if hoveredProject === p}
+              <div class="cat-menu">
+                {#each CATEGORIES as c}
+                  <button class="cm-row" onclick={() => openPreset(p, c)}>
+                    <span class="dot" style:background={categoryColor(c)}></span>{c}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
   <button class="playbig" class:running onclick={headerPlay} title={running ? "Pause" : "Start"}>
     {running ? "❚❚" : "▶"}
   </button>
@@ -102,6 +141,7 @@
       <span class="dow">{dayLabel(d).dow}</span>
       <span class="md muted">{dayLabel(d).md}</span>
       <span class="tot mono" class:has={stripTotal(d) > 0}>{secToHMM(stripTotal(d))}</span>
+      {#if daySubmitted(d)}<span class="sub-tick" title="Submitted to Fillout">✅</span>{/if}
       {#if d === today}<span class="today-tag">Today</span>{/if}
     </button>
   {/each}
@@ -158,6 +198,20 @@
       <span class="mono">{secToHHMM(selectedTotal)}</span>
     </div>
 
+    <div class="sub-status" class:done={selSubmitted}>
+      {#if selSubmitted}
+        <span class="s-icon">✅</span>
+        <span class="s-text">Submitted to Fillout
+          <span class="muted">· {longDate(selected)} · {selSubmitted.method === "auto" ? "auto-detected" : "marked manually"}</span>
+        </span>
+        <button class="btn tiny" onclick={() => unmarkDaySubmitted(selected)}>Unmark</button>
+      {:else}
+        <span class="s-icon">⬜</span>
+        <span class="s-text">Not submitted yet</span>
+        <button class="btn tiny" onclick={() => markDaySubmitted(selected, "manual")}>Mark submitted</button>
+      {/if}
+    </div>
+
     <div class="submit-panel">
       <h2>Submit to Fillout</h2>
       <label for="subname">Your name</label>
@@ -194,7 +248,13 @@
 {/if}
 
 {#if modal}
-  <AddEntryModal date={selected} entry={modal.entry} onclose={() => (modal = null)} />
+  <AddEntryModal
+    date={selected}
+    entry={modal.entry}
+    presetProject={modal.presetProject || ""}
+    presetCategory={modal.presetCategory || ""}
+    onclose={() => (modal = null)}
+  />
 {/if}
 
 <style>
@@ -203,7 +263,38 @@
     padding: 8px 0 16px;
     border-bottom: 1px solid var(--border-color);
   }
-  .big { font-size: 34px; font-weight: 600; letter-spacing: 1px; }
+  .big-wrap { position: relative; }
+  .big { font-size: 34px; font-weight: 600; letter-spacing: 1px; cursor: default; }
+  .big-wrap:hover .big { color: var(--accent-light); }
+
+  .proj-menu {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    z-index: 60; margin-top: 6px;
+    min-width: 220px; padding: 6px;
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.35);
+  }
+  .pm-head { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 4px 10px 6px; }
+  .pm-row {
+    position: relative; display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 7px; font-size: 13.5px; cursor: pointer;
+  }
+  .pm-row:hover { background: var(--bg-surface-hover); }
+  .pm-name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chev { color: var(--text-muted); }
+  .cat-menu {
+    position: absolute; top: -6px; left: 100%; margin-left: 4px;
+    min-width: 170px; padding: 6px;
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.35);
+  }
+  .cm-row {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 8px 10px; border: none; background: none; border-radius: 7px;
+    color: var(--text-primary); font-size: 13.5px; cursor: pointer; text-align: left;
+  }
+  .cm-row:hover { background: var(--bg-surface-hover); }
+
   .playbig {
     width: 44px; height: 44px; border-radius: 50%;
     border: none; background: var(--accent); color: #fff;
@@ -290,6 +381,19 @@
   }
   .sumrow span:first-child { display: inline-flex; align-items: center; gap: 8px; }
   .sumrow.total { font-weight: 700; }
+
+  .sub-tick { position: absolute; right: 9px; top: 7px; font-size: 11px; }
+
+  .sub-status {
+    display: flex; align-items: center; gap: 10px;
+    margin-top: 20px; padding: 12px 14px;
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: 10px; font-size: 13.5px;
+  }
+  .sub-status.done { border-color: var(--success); }
+  .sub-status .s-icon { font-size: 15px; }
+  .sub-status .s-text { flex: 1; }
+  .btn.tiny { padding: 5px 10px; font-size: 12.5px; }
 
   .submit-panel { margin-top: 26px; }
   .small { font-size: 12.5px; }
