@@ -2,28 +2,45 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 
 .shell { display: flex; min-height: 100vh; }
 .sidebar {
-  width: 220px;
+  width: 224px;
   flex: none;
   background: var(--bg-surface);
   border-right: 1px solid var(--border-color);
-  padding: 20px 12px;
+  padding: 22px 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
-.brand { font-weight: 600; font-size: 16px; padding: 0 8px 20px; }
+.brand {
+  font-weight: 700; font-size: 15.5px; padding: 2px 10px 22px;
+  display: flex; align-items: center; gap: 9px; letter-spacing: -.01em;
+}
+.brand::before {
+  content: "⏱"; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--accent); color: #fff; font-size: 15px; flex: none;
+}
 .navBtn {
+  position: relative;
   text-align: left;
-  padding: 10px 12px;
-  border-radius: 6px;
+  padding: 10px 13px;
+  border-radius: 9px;
   border: none;
   background: none;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
+  font-weight: 500;
+  transition: background .12s ease, color .12s ease;
 }
-.navBtn:hover { background: var(--bg-surface-hover); }
-.navBtn.active { background: var(--accent); color: var(--text-on-accent); }
+.navBtn:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+/* active: soft accent tint + a left indicator bar — clearer and more modern
+   than a heavy solid-blue block. */
+.navBtn.active { background: var(--accent-tint); color: var(--accent-light); }
+.navBtn.active::before {
+  content: ""; position: absolute; left: 3px; top: 9px; bottom: 9px; width: 3px;
+  border-radius: 3px; background: var(--accent);
+}
 
 /* Tab-only scale-up: popup.css's sizes (13px base, tight paddings) were
    tuned for the cramped 340px popup and read too small in a full tab.
@@ -69,7 +86,14 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
    on the right (inspired by the reference layout) — a wide-screen
    improvement over stacking them, which the popup keeps doing since it
    doesn't have the width to spare. */
-.todayCols { display: grid; grid-template-columns: 1fr 360px; gap: 36px; align-items: start; margin-top: 24px; }
+.todayCols { display: grid; grid-template-columns: 1fr 360px; gap: 32px; align-items: start; margin-top: 24px; }
+/* Add-project form sits in its own card on the wide tab layout. */
+.content .addProjectCol {
+  background: var(--bg-surface); border: 1px solid var(--border-color);
+  border-radius: var(--radius); padding: 2px 20px 22px; box-shadow: var(--shadow-sm);
+  position: sticky; top: 24px;
+}
+.content .addProjectCol h2 { margin-top: 20px; }
 
 /* The confirm modal's box is sized (width:100%) for the 340px popup — in a
    full browser tab that stretches edge to edge. Cap it here to a normal
@@ -80,17 +104,20 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .statTile {
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color .12s ease;
 }
-.statTile .label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
-.statTile .value { font-size: 26px; font-weight: 600; margin-top: 6px; }
-.statTile .sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.statTile:hover { border-color: var(--text-muted); }
+.statTile .label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); }
+.statTile .value { font-size: 27px; font-weight: 700; margin-top: 7px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.statTile .sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 
 .breakdownRow { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 14px; }
 .breakdownRow .name { width: 150px; flex: none; color: var(--text-secondary); }
-.breakdownRow .bar { flex: 1; height: 10px; background: var(--bg-surface-2); border-radius: 4px; overflow: hidden; }
-.breakdownRow .bar > span { display: block; height: 100%; background: var(--accent); }
+.breakdownRow .bar { flex: 1; height: 9px; background: var(--bg-surface-2); border-radius: 999px; overflow: hidden; }
+.breakdownRow .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
 .breakdownRow .amount { width: 70px; flex: none; text-align: right; color: var(--text-muted); }
 
 .settingsRow { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--border-color); }

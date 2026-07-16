@@ -120,7 +120,7 @@ function renderDashboard() {
       container.appendChild(row);
     }
   };
-  renderBreakdown("byProjectList", byProject(daysMap));
+  renderBreakdown("byProjectList", byProject(daysMap), projectColor);
   renderBreakdown("byCategoryList", byCategory(daysMap), categoryColor);
 }
 
