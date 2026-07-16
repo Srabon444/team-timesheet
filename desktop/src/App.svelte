@@ -124,4 +124,24 @@
   .you-name { font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .content { flex: 1; min-width: 0; overflow-y: auto; padding: 22px 26px; }
+
+  /* Mobile / narrow (Android): no OS window chrome, sidebar becomes a
+     horizontal top nav, content full width. Never triggers on desktop
+     (min window width is 900px), so it's safe to carry on every branch. */
+  @media (max-width: 640px) {
+    .titlebar { display: none; }
+    .body { flex-direction: column; }
+    .sidebar {
+      width: 100%; flex-direction: row; align-items: center;
+      overflow-x: auto; height: auto; gap: 4px;
+      /* env() keeps the top nav clear of the phone's status bar / clock
+         (needs viewport-fit=cover; 0 on desktop, so harmless). */
+      padding: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 8px calc(8px + env(safe-area-inset-left));
+      border-right: none; border-bottom: 1px solid var(--border-color);
+      position: sticky; top: 0; z-index: 20;
+    }
+    .brand, .spacer, .you { display: none; }
+    .nav { flex: none; white-space: nowrap; padding: 10px 14px; font-size: 14.5px; }
+    .content { padding: 16px 14px calc(16px + env(safe-area-inset-bottom)); }
+  }
 </style>
