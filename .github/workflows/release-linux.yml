@@ -44,7 +44,11 @@ jobs:
 
       - name: Compute release tag
         id: tag
-        run: echo "name=linux-v0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+        # Tag stays prefixed (linux-v…) for uniqueness + the keep-latest
+        # cleanup filter; the visible release NAME is plain semver.
+        run: |
+          echo "tag=linux-v0.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "name=v0.0.${{ github.run_number }} (Linux)" >> "$GITHUB_OUTPUT"
 
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
@@ -52,8 +56,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: desktop
-          tagName: ${{ steps.tag.outputs.name }}
-          releaseName: "Team Timesheet ${{ steps.tag.outputs.name }} (Linux)"
+          tagName: ${{ steps.tag.outputs.tag }}
+          releaseName: ${{ steps.tag.outputs.name }}
           releaseBody: "Linux build: .deb and .AppImage attached."
           releaseDraft: false
           prerelease: false
