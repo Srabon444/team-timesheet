@@ -48,7 +48,13 @@
 
             <div class="todayCols">
               <div class="entriesCol">
-                <h2>Today's projects</h2>
+                <div class="dayNav">
+                  <button id="dayPrev" class="link" title="Previous day">‹</button>
+                  <input id="viewDateInput" type="date">
+                  <button id="dayNext" class="link" title="Next day">›</button>
+                  <button id="todayBtn" class="link hidden">Today</button>
+                </div>
+                <h2 id="dayHeading">Today's projects</h2>
                 <div id="entries" class="entries"></div>
                 <p id="emptyMsg" class="muted small">No projects yet.</p>
               </div>
@@ -65,6 +71,8 @@
                   <select id="catSelect"></select>
                   <label>Description <span class="req">*</span></label>
                   <input id="descInput" type="text" placeholder="Task description">
+                  <label>Time (hh:mm)</label>
+                  <input id="timeInput" type="text" placeholder="00:00" value="00:00">
                   <button id="addProject" class="btn primary">+ Add Project</button>
                   <button id="cancelEdit" class="btn hidden">Cancel</button>
                   <p id="addStatus" class="status"></p>
@@ -144,6 +152,21 @@
             <button class="btn" id="themeLight" style="width:auto">Light</button>
             <button class="btn" id="themeSystem" style="width:auto">System</button>
           </div>
+        </div>
+
+        <div class="settingsRow" style="display:block">
+          <div class="label">Backup &amp; transfer</div>
+          <div class="desc">Export your tracked data, or paste a backup to restore it.
+            The same text imports to/from the desktop app.</div>
+
+          <label>Export</label>
+          <textarea id="exportBox" class="ioBox" rows="4" readonly></textarea>
+          <button id="copyExport" class="btn" style="width:auto">Copy to clipboard</button>
+
+          <label style="margin-top:10px">Import</label>
+          <textarea id="importBox" class="ioBox" rows="4" placeholder="Paste exported data here…"></textarea>
+          <button id="doImport" class="btn primary" style="width:auto">Import</button>
+          <p id="ioStatus" class="status"></p>
         </div>
 
         <div class="dangerZone">

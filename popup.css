@@ -44,6 +44,25 @@ select:focus, input:focus { outline: none; border-color: var(--accent); }
 .btn.danger:hover { background: var(--danger-hover); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .link { background: none; border: none; color: var(--accent-light); cursor: pointer; font-size: 12px; padding: 0; }
+.link:disabled { opacity: .4; cursor: default; }
+
+/* Day navigator for browsing / back-filling past days (Task 4b) */
+.dayNav { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; }
+.dayNav .link { font-size: 16px; }
+.dayNav input[type="date"] {
+  background: var(--bg-surface); color: var(--text-primary);
+  border: 1px solid var(--bg-surface-2, var(--bg-surface)); border-radius: 6px;
+  padding: 3px 6px; font-size: 12px; color-scheme: dark light;
+}
+.dayNav #todayBtn { margin-left: auto; }
+
+/* Backup & transfer textareas (Task 1) */
+.ioBox {
+  width: 100%; margin: 6px 0; padding: 8px 10px;
+  background: var(--bg-surface); color: var(--text-primary);
+  border: 1px solid var(--bg-surface-2, var(--bg-surface)); border-radius: 6px;
+  font: 11px/1.4 ui-monospace, monospace; resize: vertical; box-sizing: border-box;
+}
 
 .topbar { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 8px; border-bottom: 1px solid var(--bg-surface); }
 .who { font-weight: 600; font-size: 14px; }

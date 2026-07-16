@@ -40,6 +40,10 @@ function projectColor(project) {
 
 var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
 let tick = null;
+// Which day the main view is showing/editing. Today uses the live S.entries;
+// any past day reads/writes S.history[viewDate] so you can back-fill entries
+// the same way the desktop app lets you (Task 4b).
+let viewDate = null;
 
 // ---------- utils ----------
 const $ = (id) => document.getElementById(id);
@@ -47,6 +51,24 @@ const pad = (n) => String(n).padStart(2, "0");
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function addDaysStr(dateStr, n) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+// The day currently shown in the main view. The "live" day is S.date (the
+// day S.entries belongs to — kept == todayStr() by init()'s daily reset);
+// any other day reads/writes that day's archived list.
+function isTodayView() {
+  return viewDate === S.date;
+}
+function currentEntries() {
+  return isTodayView() ? S.entries : (S.history[viewDate] || []);
+}
+async function persistCurrent() {
+  if (isTodayView()) await chrome.storage.local.set({ entries: S.entries, timer: S.timer });
+  else await chrome.storage.local.set({ history: S.history });
 }
 function secToHHMM(sec) {
   let m = Math.round(sec / 60);
@@ -134,12 +156,11 @@ async function pauseTimer() {
   render();
 }
 function editTime(id, str) {
-  const e = S.entries.find((x) => x.id === id);
+  const e = currentEntries().find((x) => x.id === id);
   if (!e) return;
-  const sec = hhmmToSec(str);
-  e.accSec = sec;
-  if (S.timer.activeId === id) S.timer.startedAt = Date.now(); // rebase running timer
-  persist();
+  e.accSec = hhmmToSec(str);
+  if (isTodayView() && S.timer.activeId === id) S.timer.startedAt = Date.now(); // rebase running timer
+  persistCurrent();
 }
 
 // ---------- views ----------
@@ -165,10 +186,31 @@ function showMain() {
   $("main").classList.remove("hidden");
   $("whoName").textContent = S.name;
   $("whoDate").textContent = S.date;
+  viewDate = S.date;
   fillSelect($("catSelect"), CATEGORIES);
+  updateDayNav();
   refreshAddForm();
   render();
   $("projSelect").focus();
+}
+
+// Day navigation for the main view (Task 4b: browse/back-fill past days).
+function updateDayNav() {
+  const inp = $("viewDateInput");
+  if (inp) { inp.value = viewDate; inp.max = S.date; }
+  const heading = $("dayHeading");
+  if (heading) heading.textContent = isTodayView() ? "Today's projects" : `Projects — ${viewDate}`;
+  const t = $("todayBtn");
+  if (t) t.classList.toggle("hidden", isTodayView());
+  const next = $("dayNext");
+  if (next) next.disabled = isTodayView(); // no future days
+}
+function setViewDate(dateStr) {
+  if (!dateStr || dateStr > S.date) dateStr = S.date; // never past the live day
+  viewDate = dateStr;
+  clearDraft(); // drop any in-progress edit when changing days
+  updateDayNav();
+  render();
 }
 // Reflect S.draft into the add-form (survives popup close / tab switch).
 // draft = { project, category, description, editingId }
@@ -179,6 +221,7 @@ function refreshAddForm() {
   $("projSelect").value = (d && d.project) || S.lastProject || PROJECTS[0];
   $("catSelect").value = (d && d.category) || S.lastCategory || CATEGORIES[0];
   $("descInput").value = (d && d.description) || "";
+  if ($("timeInput")) $("timeInput").value = (d && d.time) || "00:00";
   const editing = !!(d && d.editingId);
   $("addProject").textContent = editing ? "Save changes" : "+ Add Project";
   $("cancelEdit").classList.toggle("hidden", !editing);
@@ -188,14 +231,18 @@ function saveDraft() {
     project: $("projSelect").value,
     category: $("catSelect").value,
     description: $("descInput").value,
+    time: $("timeInput") ? $("timeInput").value : "00:00",
     editingId: (S.draft && S.draft.editingId) || null,
   };
   chrome.storage.local.set({ draft: S.draft });
 }
 function startEdit(id) {
-  const e = S.entries.find((x) => x.id === id);
+  const e = currentEntries().find((x) => x.id === id);
   if (!e) return;
-  S.draft = { project: e.project, category: e.category, description: e.description, editingId: id };
+  S.draft = {
+    project: e.project, category: e.category, description: e.description,
+    time: secToHHMM(elapsedSec(e)), editingId: id,
+  };
   chrome.storage.local.set({ draft: S.draft });
   refreshAddForm();
   $("addStatus").textContent = "";
@@ -293,9 +340,11 @@ function setupSearchSelect(input, listEl, getOptions) {
 function render() {
   const box = $("entries");
   box.innerHTML = "";
-  $("emptyMsg").classList.toggle("hidden", S.entries.length > 0);
-  for (const e of S.entries) {
-    const active = S.timer.activeId === e.id;
+  const list = currentEntries();
+  const todayView = isTodayView();
+  $("emptyMsg").classList.toggle("hidden", list.length > 0);
+  for (const e of list) {
+    const active = todayView && S.timer.activeId === e.id;
     const div = document.createElement("div");
     div.className = "entry" + (active ? " active" : "");
     div.innerHTML = `
@@ -313,7 +362,7 @@ function render() {
       </div>
       <div class="desc"></div>
       <div class="row2">
-        <button class="tbtn ${active ? "playing" : ""}">${active ? "❚❚" : "▶"}</button>
+        ${todayView ? `<button class="tbtn ${active ? "playing" : ""}">${active ? "❚❚" : "▶"}</button>` : ""}
         <input class="time" type="text" value="${secToHHMM(elapsedSec(e))}">
         <span class="live">${active ? secToHHMMSS(elapsedSec(e)) : ""}</span>
       </div>`;
@@ -325,7 +374,8 @@ function render() {
     catEl.textContent = e.category;
     catEl.style.background = categoryColor(e.category);
     div.querySelector(".desc").textContent = e.description;
-    div.querySelector(".tbtn").onclick = () => (active ? pauseTimer() : startTimer(e.id));
+    const tbtn = div.querySelector(".tbtn");
+    if (tbtn) tbtn.onclick = () => (active ? pauseTimer() : startTimer(e.id));
     div.querySelector(".edit").onclick = () => startEdit(e.id);
     div.querySelector(".del").onclick = () => deleteEntry(e.id);
     const ti = div.querySelector(".time");
@@ -338,9 +388,11 @@ async function deleteEntry(id) {
   if (S.confirmBeforeDelete !== false) {
     if (!(await showConfirm("Delete this project entry?", "Yes, delete"))) return;
   }
-  if (S.timer.activeId === id) S.timer = { activeId: null, startedAt: null };
-  S.entries = S.entries.filter((x) => x.id !== id);
-  await persist();
+  if (isTodayView() && S.timer.activeId === id) S.timer = { activeId: null, startedAt: null };
+  const list = currentEntries();
+  const idx = list.findIndex((x) => x.id === id);
+  if (idx >= 0) list.splice(idx, 1);
+  await persistCurrent();
   render();
 }
 // live-update the running entry's time field (skip if user is editing it)
@@ -369,17 +421,25 @@ async function submitDraft() {
   }
   const project = $("projSelect").value;
   const cat = $("catSelect").value;
+  const timeStr = $("timeInput") ? $("timeInput").value.trim() : "00:00";
+  const timeSec = /^\d{1,2}:\d{2}$/.test(timeStr) ? hhmmToSec(timeStr) : 0;
   const editingId = S.draft && S.draft.editingId;
   if (editingId) {
-    const e = S.entries.find((x) => x.id === editingId);
-    if (e) { e.project = project; e.category = cat; e.description = desc; } // keep accSec/timer
+    const e = currentEntries().find((x) => x.id === editingId);
+    if (e) {
+      e.project = project; e.category = cat; e.description = desc;
+      e.accSec = timeSec;
+      if (isTodayView() && S.timer.activeId === editingId) S.timer.startedAt = Date.now(); // rebase running
+    }
   } else {
-    S.entries.push({ id: crypto.randomUUID(), project, category: cat, description: desc, accSec: 0 });
+    if (!isTodayView() && !S.history[viewDate]) S.history[viewDate] = [];
+    currentEntries().push({ id: crypto.randomUUID(), project, category: cat, description: desc, accSec: timeSec });
   }
   S.lastProject = project;
   S.lastCategory = cat;
   S.draft = null;
-  await chrome.storage.local.set({ entries: S.entries, lastProject: project, lastCategory: cat, draft: null });
+  await persistCurrent();
+  await chrome.storage.local.set({ lastProject: project, lastCategory: cat, draft: null });
   st.className = "status ok";
   st.textContent = editingId ? "Saved." : "Added.";
   refreshAddForm();
@@ -440,21 +500,22 @@ async function saveName() {
 async function finalSubmit() {
   const st = $("submitStatus");
   st.className = "status";
-  if (!S.entries.length) {
+  const list = currentEntries();
+  if (!list.length) {
     st.className = "status err";
     st.textContent = "No projects to submit.";
     return;
   }
-  foldActive();
-  await persist();
+  if (isTodayView()) foldActive();
+  await persistCurrent();
   render();
   // Only re-submit entries that haven't gone through yet — otherwise a
   // second Final Submit click (e.g. after adding one more project) would
   // re-add every already-submitted entry a second time in the real form.
-  const pending = S.entries.filter((e) => !e.submitted);
+  const pending = list.filter((e) => !e.submitted);
   if (!pending.length) {
     st.className = "status err";
-    st.textContent = "All projects already submitted today. Add a new one to submit more.";
+    st.textContent = "All projects here already submitted. Add a new one to submit more.";
     return;
   }
   const payload = pending.map((e) => ({
@@ -465,12 +526,13 @@ async function finalSubmit() {
   }));
   if (payload.every((e) => hhmmToSec(e.hhmm) === 0)) {
     st.className = "status err";
-    st.textContent = "All projects are 00:00 — start a timer first.";
+    st.textContent = "All projects are 00:00 — set a time first.";
     return;
   }
   const zeros = payload.filter((e) => hhmmToSec(e.hhmm) === 0).length;
   const msg = `Submit ${payload.length} project(s) to the timesheet form?` +
     (zeros ? `\n${zeros} have 00:00 time.` : "") +
+    (isTodayView() ? "" : `\nThese are for ${viewDate} — set the form's Date field to ${viewDate} before its final Submit.`) +
     `\n\nThis fills entries only — it will NOT click the form's final Submit.`;
   if (!(await showConfirm(msg))) return;
 
@@ -483,7 +545,7 @@ async function finalSubmit() {
     // failure, so the first `added` of them are the ones that succeeded.
     const addedCount = out ? out.added : 0;
     for (let i = 0; i < addedCount; i++) pending[i].submitted = true;
-    if (addedCount > 0) { await persist(); render(); }
+    if (addedCount > 0) { await persistCurrent(); render(); }
     if (out && out.error) {
       st.className = "status err";
       st.textContent = "Stopped: " + out.error + ` (${addedCount} added)`;
@@ -801,6 +863,11 @@ document.addEventListener("DOMContentLoaded", () => {
   $("projSelect").onchange = saveDraft;
   $("catSelect").onchange = saveDraft;
   $("descInput").oninput = saveDraft;
+  if ($("timeInput")) $("timeInput").oninput = saveDraft;
+  if ($("dayPrev")) $("dayPrev").onclick = () => setViewDate(addDaysStr(viewDate, -1));
+  if ($("dayNext")) $("dayNext").onclick = () => setViewDate(addDaysStr(viewDate, 1));
+  if ($("todayBtn")) $("todayBtn").onclick = () => setViewDate(S.date);
+  if ($("viewDateInput")) $("viewDateInput").onchange = (e) => setViewDate(e.target.value);
   $("finalSubmit").onclick = finalSubmit;
   setupSearchSelect($("projSelect"), $("projList"), () => PROJECTS);
   setupSearchSelect($("nameSelect"), $("nameList"), () => S.names || []);

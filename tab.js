@@ -128,6 +128,61 @@ function renderSettings() {
   document.getElementById("dailyLimitSelect").value = String(S.dailyLimitHours || 8);
   document.getElementById("confirmDeleteToggle").checked = S.confirmBeforeDelete !== false;
   document.getElementById("settingsNameInput").value = S.name || "";
+  const ex = document.getElementById("exportBox");
+  if (ex) ex.value = buildExportText();
+}
+
+// ---- Backup / transfer (Task 1: manual bridge, same envelope as the app) ----
+function buildExportText() {
+  return JSON.stringify(
+    { app: "team-timesheet", v: 1, exportedAt: Date.now(), name: S.name || "", days: buildDaysMap() },
+    null, 2
+  );
+}
+async function copyExport() {
+  const st = document.getElementById("ioStatus");
+  try {
+    await navigator.clipboard.writeText(buildExportText());
+    st.className = "status ok"; st.textContent = "Copied to clipboard.";
+  } catch {
+    st.className = "status err"; st.textContent = "Copy failed — select the text and copy manually.";
+  }
+}
+async function doImport() {
+  const st = document.getElementById("ioStatus");
+  st.className = "status";
+  let obj;
+  try { obj = JSON.parse(document.getElementById("importBox").value); }
+  catch { st.className = "status err"; st.textContent = "That's not valid JSON."; return; }
+  if (!obj || typeof obj.days !== "object" || obj.days === null) {
+    st.className = "status err"; st.textContent = "No 'days' data found in that text."; return;
+  }
+  const n = Object.keys(obj.days).length;
+  if (!(await showConfirm(`Replace all tracked data with this import (${n} day(s))? Current data is overwritten.`, "Yes, import"))) return;
+  const today = todayStr();
+  const history = {};
+  let todays = [];
+  for (const [date, list] of Object.entries(obj.days)) {
+    const clean = (Array.isArray(list) ? list : []).map((e) => ({
+      id: e.id || crypto.randomUUID(),
+      project: e.project, category: e.category, description: e.description,
+      accSec: e.accSec || 0, submitted: !!e.submitted,
+    }));
+    if (date === today) todays = clean; else history[date] = clean;
+  }
+  S.history = history;
+  S.entries = todays;
+  S.timer = { activeId: null, startedAt: null }; // never import a running timer
+  S.date = today;
+  if (obj.name && !S.name) S.name = obj.name;
+  await chrome.storage.local.set({
+    history: S.history, entries: S.entries, timer: S.timer, date: today, name: S.name,
+  });
+  document.getElementById("importBox").value = "";
+  st.className = "status ok"; st.textContent = `Imported ${n} day(s).`;
+  renderSettings();
+  render();          // popup.js — refresh Today panel
+  renderDashboard();
 }
 
 async function resetEverything() {
@@ -182,6 +237,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("themeLight").onclick = () => applyTheme("light");
   document.getElementById("themeSystem").onclick = () => applyTheme("system");
   document.getElementById("resetEverything").onclick = resetEverything;
+  if (document.getElementById("copyExport")) document.getElementById("copyExport").onclick = copyExport;
+  if (document.getElementById("doImport")) document.getElementById("doImport").onclick = doImport;
   setupSearchSelect(
     document.getElementById("settingsNameInput"),
     document.getElementById("settingsNameList"),

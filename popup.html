@@ -48,12 +48,20 @@
         <select id="catSelect"></select>
         <label>Description <span class="req">*</span></label>
         <input id="descInput" type="text" placeholder="Task description">
+        <label>Time (hh:mm)</label>
+        <input id="timeInput" type="text" placeholder="00:00" value="00:00">
         <button id="addProject" class="btn primary">+ Add Project</button>
         <button id="cancelEdit" class="btn hidden">Cancel</button>
         <p id="addStatus" class="status"></p>
       </div>
 
-      <h2>Today's projects</h2>
+      <div class="dayNav">
+        <button id="dayPrev" class="link" title="Previous day">‹</button>
+        <input id="viewDateInput" type="date">
+        <button id="dayNext" class="link" title="Next day">›</button>
+        <button id="todayBtn" class="link hidden">Today</button>
+      </div>
+      <h2 id="dayHeading">Today's projects</h2>
       <div id="entries" class="entries"></div>
       <p id="emptyMsg" class="muted small">No projects yet.</p>
 
