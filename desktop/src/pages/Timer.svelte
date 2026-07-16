@@ -15,12 +15,20 @@
   nav.jumpDate = null;
   let tab = $state("timesheet");
   let modal = $state(null); // { entry|null, presetProject?, presetCategory? }
-  let menuOpen = $state(false);      // header-timer hover menu
+  let menuOpen = $state(false);      // header quick-add menu visible?
+  let pinned = $state(false);        // clicked open (stays open); vs hover-open
   let hoveredProject = $state(null); // which project's category submenu is open
+
+  function openMenu() { menuOpen = true; }
+  function closeMenu() { if (!pinned) { menuOpen = false; hoveredProject = null; } }
+  function toggleMenu() { pinned = !pinned; menuOpen = pinned; if (!pinned) hoveredProject = null; }
+  // Tap a project to open its categories (touch has no hover); hover also works.
+  function pickProject(p) { hoveredProject = hoveredProject === p ? null : p; }
 
   function openPreset(p, c) {
     selected = today;
     menuOpen = false;
+    pinned = false;
     hoveredProject = null;
     modal = { entry: null, presetProject: p, presetCategory: c };
   }
@@ -86,31 +94,38 @@
   }
 </script>
 
+{#if menuOpen}
+  <!-- click-away closes the pinned menu -->
+  <div class="menu-backdrop" onclick={() => { pinned = false; menuOpen = false; hoveredProject = null; }} role="presentation"></div>
+{/if}
+
 <div class="timer-head">
-  <!-- Hovering the big timer reveals a project → category quick-add menu. -->
-  <div class="big-wrap"
-       role="button" tabindex="0"
-       onmouseenter={() => (menuOpen = true)}
-       onmouseleave={() => { menuOpen = false; hoveredProject = null; }}>
+  <!-- Big timer + a discoverable quick-add menu (hover on desktop, tap the
+       chevron on touch) → pick a project, then a category. -->
+  <div class="big-wrap" onmouseenter={openMenu} onmouseleave={closeMenu}>
     <div class="big mono">{running ? secToHHMMSS(entryElapsed(running)) : "00:00:00"}</div>
+    <button class="quickadd" class:on={menuOpen} onclick={toggleMenu} title="Quick add a task" aria-label="Quick add a task">
+      + Quick add ▾
+    </button>
     {#if menuOpen}
       <div class="proj-menu">
-        <div class="pm-head muted">Quick add</div>
+        <div class="pm-head muted">Pick a project</div>
         {#each PROJECTS as p}
-          <div class="pm-row" onmouseenter={() => (hoveredProject = p)}>
+          <button class="pm-row" class:open={hoveredProject === p}
+                  onmouseenter={() => (hoveredProject = p)} onclick={() => pickProject(p)}>
             <span class="dot" style:background={projectColor(p)}></span>
             <span class="pm-name">{p}</span>
             <span class="chev">›</span>
             {#if hoveredProject === p}
               <div class="cat-menu">
                 {#each CATEGORIES as c}
-                  <button class="cm-row" onclick={() => openPreset(p, c)}>
+                  <button class="cm-row" onclick={(e) => { e.stopPropagation(); openPreset(p, c); }}>
                     <span class="dot" style:background={categoryColor(c)}></span>{c}
                   </button>
                 {/each}
               </div>
             {/if}
-          </div>
+          </button>
         {/each}
       </div>
     {/if}
@@ -263,37 +278,51 @@
     padding: 8px 0 16px;
     border-bottom: 1px solid var(--border-color);
   }
-  .big-wrap { position: relative; }
+  .big-wrap { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; }
   .big { font-size: 34px; font-weight: 600; letter-spacing: 1px; cursor: default; }
-  .big-wrap:hover .big { color: var(--accent-light); }
 
+  /* Visible, discoverable trigger for the quick-add menu (esp. on touch). */
+  .quickadd {
+    border: 1px solid var(--border-color); background: var(--bg-surface);
+    color: var(--text-secondary); border-radius: 999px;
+    padding: 4px 12px; font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: all .12s ease;
+  }
+  .quickadd:hover, .quickadd.on { border-color: var(--accent); color: var(--accent-light); background: var(--bg-surface-hover); }
+
+  .menu-backdrop { position: fixed; inset: 0; z-index: 55; }
   .proj-menu {
     position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-    z-index: 60; margin-top: 6px;
-    min-width: 220px; padding: 6px;
+    z-index: 60; margin-top: 8px;
+    min-width: 240px; max-height: 60vh; overflow-y: auto; padding: 6px;
     background: var(--bg-surface); border: 1px solid var(--border-color);
-    border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.35);
+    border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.45);
   }
-  .pm-head { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 4px 10px 6px; }
+  .pm-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; padding: 6px 10px 8px; }
   .pm-row {
-    position: relative; display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px; border-radius: 7px; font-size: 13.5px; cursor: pointer;
+    position: relative; display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 10px 11px; border: none; background: none; border-radius: 8px;
+    font-size: 13.5px; color: var(--text-primary); cursor: pointer; text-align: left;
   }
-  .pm-row:hover { background: var(--bg-surface-hover); }
-  .pm-name { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chev { color: var(--text-muted); }
+  .pm-row:hover, .pm-row.open { background: var(--bg-surface-hover); }
+  .pm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chev { color: var(--text-muted); font-size: 16px; }
   .cat-menu {
-    position: absolute; top: -6px; left: 100%; margin-left: 4px;
-    min-width: 170px; padding: 6px;
+    position: absolute; top: -6px; left: 100%; margin-left: 6px;
+    min-width: 180px; padding: 6px; z-index: 61;
     background: var(--bg-surface); border: 1px solid var(--border-color);
-    border-radius: 10px; box-shadow: 0 12px 30px rgba(0,0,0,.35);
+    border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.45);
   }
   .cm-row {
-    display: flex; align-items: center; gap: 8px; width: 100%;
-    padding: 8px 10px; border: none; background: none; border-radius: 7px;
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 10px 11px; border: none; background: none; border-radius: 8px;
     color: var(--text-primary); font-size: 13.5px; cursor: pointer; text-align: left;
   }
   .cm-row:hover { background: var(--bg-surface-hover); }
+  /* On narrow screens the flyout would overflow — stack it below instead. */
+  @media (max-width: 640px) {
+    .cat-menu { position: static; margin: 4px 0 4px 18px; box-shadow: none; }
+  }
 
   .playbig {
     width: 44px; height: 44px; border-radius: 50%;
