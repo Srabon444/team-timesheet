@@ -11,6 +11,9 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "notification:default",
-    "opener:allow-open-url"
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://techzu.fillout.com/*" }]
+    }
   ]
 }
