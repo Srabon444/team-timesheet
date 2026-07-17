@@ -3,14 +3,15 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 const FILLOUT_ORIGIN: &str = "https://techzu.fillout.com/";
 
-/// One pending auto-fill job for the "fillout" window. `reloaded` tracks the
-/// mandated reload-first flow: the page must fully load once, visibly reload,
-/// and only then receive the injected fill script (mirrors the Chrome
-/// extension's ensureFormTab, where skipping this caused half-hydrated pages
-/// to silently drop the Name selection).
+/// One pending auto-fill job for the "fillout" window. Injected on the first
+/// page-load `Finished` event. (An earlier version reloaded once and waited
+/// for a SECOND Finished before injecting; that second event doesn't fire
+/// reliably across webview engines — on some, injection never happened and
+/// the window just sat there. The script itself polls for form readiness, so
+/// injecting on the first load is both simpler and reliable.)
 struct FilloutJob {
     script: String,
-    reloaded: bool,
+    injected: bool,
 }
 
 struct FilloutState(Mutex<Option<FilloutJob>>);
@@ -66,13 +67,12 @@ fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), Strin
     let parsed: tauri::Url = url.parse().map_err(|e: url::ParseError| e.to_string())?;
     {
         let state = app.state::<FilloutState>();
-        *state.0.lock().unwrap() = Some(FilloutJob { script, reloaded: false });
+        *state.0.lock().unwrap() = Some(FilloutJob { script, injected: false });
     }
     if let Some(win) = app.get_webview_window("fillout") {
         let _ = win.show();
         let _ = win.set_focus();
-        // Re-navigating fires on_page_load again, which runs the same
-        // load -> visible reload -> inject sequence as a fresh window.
+        // Re-navigating fires on_page_load again → the fresh job is injected.
         win.navigate(parsed).map_err(|e| e.to_string())?;
     } else {
         WebviewWindowBuilder::new(&app, "fillout", WebviewUrl::External(parsed))
@@ -177,7 +177,6 @@ fn start_title_poll(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
         .manage(FilloutState(Mutex::new(None)))
         .on_page_load(|webview, payload| {
             if webview.label() != "fillout" {
@@ -189,22 +188,17 @@ pub fn run() {
             let app = webview.app_handle().clone();
             let state = app.state::<FilloutState>();
             let mut guard = state.0.lock().unwrap();
-            let inject_now = match guard.as_mut() {
-                Some(job) if !job.reloaded => {
-                    job.reloaded = true;
-                    // First full load done -> the mandated visible reload.
-                    let _ = webview.eval("location.reload()");
-                    false
+            // Inject once, on the first load. `injected` guards against SPA
+            // route changes that fire extra page-load events.
+            let should_inject = matches!(guard.as_ref(), Some(job) if !job.injected);
+            if should_inject {
+                if let Some(job) = guard.as_mut() {
+                    job.injected = true;
                 }
-                Some(_) => true,
-                None => false,
-            };
-            if inject_now {
-                if let Some(job) = guard.take() {
-                    drop(guard);
-                    let _ = webview.eval(&job.script);
-                    start_title_poll(app);
-                }
+                let script = guard.as_ref().unwrap().script.clone();
+                drop(guard);
+                let _ = webview.eval(&script);
+                start_title_poll(app);
             }
         })
         .invoke_handler(tauri::generate_handler![

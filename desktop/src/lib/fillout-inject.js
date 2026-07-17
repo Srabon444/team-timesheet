@@ -153,6 +153,9 @@ async function runner(entries, name) {
   };
 
   try {
+    // Immediate visible proof the script was injected and is running, so a
+    // stuck window is distinguishable from "injection never happened".
+    banner("⏳ Auto-fill starting… waiting for the form to load", true);
     report({ phase: "waiting-for-form", added });
     const ready = await waitFor(() => {
       const hasPh = [...document.querySelectorAll(".react-select__placeholder")]
