@@ -57,8 +57,7 @@ async fn fetch_form_html(url: String) -> Result<String, String> {
 }
 
 /// Open (or refocus) the Fillout window and queue the fill script. The
-/// actual injection happens in on_page_load below, after the reload-first
-/// sequence completes.
+/// actual injection happens in on_page_load below, on the first page load.
 #[tauri::command]
 fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), String> {
     if !url.starts_with(FILLOUT_ORIGIN) {
