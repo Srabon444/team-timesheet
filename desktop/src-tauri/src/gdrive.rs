@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 const CLIENT_ID: &str = "789173524951-06e3vdigiqukinorged6o651vogh1tlm.apps.googleusercontent.com";
 const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
@@ -95,7 +96,13 @@ pub async fn gdrive_connect(app: AppHandle) -> Result<(), String> {
         "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&code_challenge={}&code_challenge_method=S256&access_type=offline&prompt=consent",
         urlencode(CLIENT_ID), urlencode(&redirect), urlencode(SCOPE), chal
     );
-    open::that(&auth_url).map_err(|e| format!("couldn't open browser: {}", e))?;
+    // The `open` crate has no Android support, so the browser launch goes
+    // through tauri-plugin-opener instead — it already handles this
+    // cross-platform (system default browser on desktop, an Intent on
+    // Android) and is the same mechanism the mobile Fillout auto-fill uses.
+    app.opener()
+        .open_url(&auth_url, None::<&str>)
+        .map_err(|e| format!("couldn't open browser: {}", e))?;
 
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     std::thread::spawn(move || {
