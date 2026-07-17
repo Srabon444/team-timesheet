@@ -54,6 +54,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Google Drive OAuth client secret, compiled in via option_env! —
+          # kept out of source; set as a repo Actions secret.
+          GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
         with:
           projectPath: desktop
           tagName: ${{ steps.tag.outputs.tag }}

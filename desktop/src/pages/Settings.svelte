@@ -1,5 +1,6 @@
 <script>
   import { app, save, applyTheme, fetchNames, showConfirm } from "../lib/store.svelte.js";
+  import { gdConnected, gdConnect, gdDisconnect, gdSync, gdBackupNow, gdListBackups, gdRestoreFile } from "../lib/gdrive.js";
 
   let fetching = $state(false);
   let fetchMsg = $state("");
@@ -63,6 +64,48 @@
     save();
     importText = "";
     ioMsg = `Imported ${n} day${n === 1 ? "" : "s"}.`;
+  }
+
+  // ---- Google Drive sync & backup ----
+  let gdBusy = $state(false);
+  let gdMsg = $state("");
+  let gdIsConnected = $state(false);
+  let gdFiles = $state(null);
+
+  async function gdRefresh() { gdIsConnected = await gdConnected(); }
+  gdRefresh();
+
+  async function gdDoConnect() {
+    gdBusy = true; gdMsg = "Opening browser — approve access, then come back…";
+    try { await gdConnect(); await gdRefresh(); gdMsg = await gdSync(true) || "Connected."; }
+    catch (e) { gdMsg = e.message || String(e); }
+    gdBusy = false;
+  }
+  async function gdDoDisconnect() {
+    await gdDisconnect(); gdIsConnected = false; gdFiles = null; gdMsg = "Disconnected.";
+  }
+  async function gdDoSync() {
+    gdBusy = true; gdMsg = "Syncing…";
+    try { gdMsg = await gdSync(true) || "Done."; } catch (e) { gdMsg = e.message || String(e); }
+    gdBusy = false;
+  }
+  async function gdDoBackup() {
+    gdBusy = true; gdMsg = "Backing up…";
+    try { await gdBackupNow(); gdMsg = "Backed up to Google Drive ✓"; } catch (e) { gdMsg = e.message || String(e); }
+    gdBusy = false;
+  }
+  async function gdDoRestore() {
+    gdBusy = true; gdMsg = "Loading backups…";
+    try { gdFiles = await gdListBackups(); gdMsg = gdFiles.length ? `${gdFiles.length} backup(s) — pick one to restore.` : "No backups found in Drive."; }
+    catch (e) { gdMsg = e.message || String(e); }
+    gdBusy = false;
+  }
+  async function gdPick(f) {
+    if (!(await showConfirm(`Restore "${f.name}"? Current data is overwritten.`, "Yes, restore"))) return;
+    gdBusy = true; gdMsg = `Restoring ${f.name}…`;
+    try { await gdRestoreFile(f.id); gdFiles = null; gdMsg = `Restored from ${f.name} ✓`; }
+    catch (e) { gdMsg = e.message || String(e); }
+    gdBusy = false;
   }
 
   async function resetEverything() {
@@ -153,6 +196,36 @@
   {#if ioMsg}<p class="muted small">{ioMsg}</p>{/if}
 </section>
 
+<section>
+  <h2>Google Drive sync &amp; backup</h2>
+  <p class="muted small">Sign in to sync this data across your devices (desktop, mobile, extension) on the
+    same Google account — auto-syncs on open and after edits, and asks which to keep if two devices
+    changed. Backups live in a "Team Timesheet Backups" folder in your own Drive.</p>
+
+  <div class="gdbtns">
+    {#if !gdIsConnected}
+      <button class="btn" onclick={gdDoConnect} disabled={gdBusy}>Connect Google Drive</button>
+    {:else}
+      <button class="btn primary" onclick={gdDoSync} disabled={gdBusy}>Sync now</button>
+      <button class="btn" onclick={gdDoBackup} disabled={gdBusy}>Back up now</button>
+      <button class="btn" onclick={gdDoRestore} disabled={gdBusy}>Restore from Drive</button>
+      <button class="btn" onclick={gdDoDisconnect} disabled={gdBusy}>Disconnect</button>
+    {/if}
+  </div>
+
+  {#if gdFiles && gdFiles.length}
+    <div class="gdlist">
+      {#each gdFiles as f}
+        <button class="gdfile" onclick={() => gdPick(f)} disabled={gdBusy}>
+          <span class="gdname">{f.name}</span>
+          <span class="gdwhen muted">{f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : ""}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+  {#if gdMsg}<p class="muted small">{gdMsg}</p>{/if}
+</section>
+
 <section class="danger">
   <div class="setrow">
     <div>
@@ -174,6 +247,17 @@
   }
   .setlbl { font-size: 14.5px; font-weight: 600; }
   .setlbl.mt { margin-top: 16px; }
+  .gdbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .gdlist { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; max-height: 280px; overflow-y: auto; }
+  .gdfile {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 10px 12px; text-align: left; cursor: pointer;
+    background: var(--bg-surface); border: 1px solid var(--border-color);
+    border-radius: var(--radius); color: var(--text-primary); font-size: 13px;
+  }
+  .gdfile:hover { border-color: var(--accent); background: var(--accent-tint); }
+  .gdname { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .gdwhen { font-size: 12px; white-space: nowrap; }
   .setdesc { font-size: 12.5px; margin-top: 3px; }
   .narrow { width: 130px; }
   .io {

@@ -1,3 +1,5 @@
+mod gdrive;
+
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -237,7 +239,11 @@ pub fn run() {
             save_data,
             fetch_form_html,
             fillout_post,
-            open_fillout
+            open_fillout,
+            gdrive::gdrive_connected,
+            gdrive::gdrive_connect,
+            gdrive::gdrive_disconnect,
+            gdrive::gdrive_api
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

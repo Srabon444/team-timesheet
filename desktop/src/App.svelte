@@ -1,6 +1,7 @@
 <script>
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { app, nav, load } from "./lib/store.svelte.js";
+  import { gdSync, gdSyncSoon } from "./lib/gdrive.js";
   import Confirm from "./components/Confirm.svelte";
   import Timer from "./pages/Timer.svelte";
   import Timesheet from "./pages/Timesheet.svelte";
@@ -11,6 +12,19 @@
   const win = getCurrentWindow();
 
   load();
+
+  // Cross-device sync: pull/push with Google Drive on open (silent — skips if
+  // not connected); a real conflict re-runs interactively to prompt.
+  gdSync(false).then((r) => { if (r === "sync-conflict") gdSync(true); }).catch(() => {});
+
+  // Push local edits shortly after any change to the days map. The signature
+  // check in gdSync makes a pull's own write a no-op, so there's no loop.
+  let firstRun = true;
+  $effect(() => {
+    JSON.stringify(app.data.days); // track deep changes to the days map
+    if (firstRun) { firstRun = false; return; } // skip the initial load
+    gdSyncSoon();
+  });
 
   const NAV = [
     ["timer", "Timer", "⏱"],
