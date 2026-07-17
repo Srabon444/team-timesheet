@@ -14,6 +14,11 @@ on:
     paths: ["desktop/**", ".github/workflows/release-android.yml"]
   workflow_dispatch:
 
+# Only build the latest push; cancel superseded runs so releases don't pile up.
+concurrency:
+  group: release-android
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -57,17 +62,28 @@ jobs:
         working-directory: desktop
         run: npm test
 
+      - name: Tool versions (diagnostic)
+        working-directory: desktop
+        run: |
+          node -v; java -version; echo "NDK_HOME=$NDK_HOME"
+          npx tauri -V || true
+
       - name: Build Android APK (debug, arm64)
         working-directory: desktop
         run: |
+          set -eux
           npm run tauri android init -- --ci
-          npm run tauri android build -- --debug --apk --target aarch64
+          npm run tauri android build -- --debug --apk --target aarch64 --verbose
 
       - name: Locate APK
         id: apk
         run: |
           APK=$(find desktop/src-tauri/gen/android -name "*.apk" | head -n1)
-          if [ -z "$APK" ]; then echo "No APK found"; exit 1; fi
+          if [ -z "$APK" ]; then
+            echo "No APK found. Build output tree:"
+            find desktop/src-tauri/gen/android -type d -name outputs -exec find {} -type f -print \; || true
+            exit 1
+          fi
           echo "path=$APK" >> "$GITHUB_OUTPUT"
           echo "Found: $APK"
 
