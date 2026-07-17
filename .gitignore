@@ -1,2 +1,10 @@
 .claude/
 node_modules/
+
+# Desktop (Tauri) build artifacts — the desktop app lives on desktop-* branches,
+# but building it leaves these generated dirs behind in the working tree on
+# master too. Never committed. (desktop-* branches also ignore them via
+# desktop/.gitignore.)
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
