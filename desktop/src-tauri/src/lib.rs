@@ -56,6 +56,38 @@ async fn fetch_form_html(url: String) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// POST JSON to Fillout's submission API. Used by the mobile headless
+/// submit (Android has no in-app auto-fill window): the frontend builds the
+/// exact /init and /continue payloads and this relays them. It must run in
+/// Rust, not JS — Fillout's API only sends CORS headers for its own
+/// techzu.fillout.com origin, so a webview fetch from the app's own origin is
+/// blocked; reqwest has no such restriction.
+#[tauri::command]
+async fn fillout_post(url: String, body: String) -> Result<String, String> {
+    if !url.starts_with("https://api.fillout.com/") {
+        return Err("refusing to POST to a non-Fillout URL".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/150.0 Safari/537.36")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .header("origin", "https://techzu.fillout.com")
+        .header("referer", "https://techzu.fillout.com/")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("Fillout API {}: {}", status.as_u16(), text));
+    }
+    Ok(text)
+}
+
 /// Open (or refocus) the Fillout window and queue the fill script. The
 /// actual injection happens in on_page_load below, on the first page load.
 #[tauri::command]
@@ -204,6 +236,7 @@ pub fn run() {
             load_data,
             save_data,
             fetch_form_html,
+            fillout_post,
             open_fillout
         ])
         .run(tauri::generate_context!())
