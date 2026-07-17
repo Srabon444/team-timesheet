@@ -59,12 +59,20 @@ jobs:
           releaseDraft: false
           prerelease: false
 
+      # Keep exactly the tag we just published. The old createdAt sort
+      # deleted the FRESH release when its createdAt hadn't populated yet in
+      # `gh release list` (replication lag sorts it first, .[:-1] then picks
+      # it). Keying off the published tag is immune to that race.
       - name: Keep only the latest macOS release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEEP: ${{ steps.tag.outputs.tag }}
         run: |
-          gh release list --json tagName,createdAt --jq \
-            '[.[] | select(.tagName | startswith("macos-v"))] | sort_by(.createdAt) | .[:-1][].tagName' \
-            | while read -r old; do
-                [ -n "$old" ] && gh release delete "$old" --yes --cleanup-tag
+          gh release view "$KEEP" >/dev/null
+          gh release list --json tagName --jq \
+            '.[] | select(.tagName | startswith("macos-v")) | .tagName' \
+            | while read -r t; do
+                if [ -n "$t" ] && [ "$t" != "$KEEP" ]; then
+                  gh release delete "$t" --yes --cleanup-tag
+                fi
               done
