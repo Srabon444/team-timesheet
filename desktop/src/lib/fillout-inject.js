@@ -239,33 +239,55 @@ async function runner(entries, name) {
     banner(doneMsg, !clearWarning);
     report({ done: true, added, addedIds, warning: clearWarning || undefined });
 
-    // Task 7: after filling, keep watching for the user actually submitting
-    // the form, so the app can record a REAL submission (not just that we
-    // filled it). Best-effort heuristic — the manual "Mark submitted" toggle
-    // in the app is the fallback when the form's success markup doesn't match.
-    const looksSubmitted = () => {
-      // The reliable terminal signal is the form's OWN controls disappearing:
-      // after a real final Submit the whole entries UI (both the "Create"
-      // button and the top-level "Submit" button) is replaced by a completion
-      // screen. We used to also require a "thank you"-style text match, but
-      // this form's completion screen doesn't contain any of those phrases, so
-      // detection never fired. Controls-gone is enough — the watch only starts
-      // AFTER our fill finishes (Create + Submit are present at that point), so
-      // both going away can only mean the user actually submitted.
-      const createGone = ![...document.querySelectorAll("button,[role=button],a,div,span")]
-        .some((n) => norm(n.textContent) === "Create" && n.offsetParent !== null);
-      const submitGone = ![...document.querySelectorAll("button,[role=button]")]
-        .some((b) => norm(b.textContent) === "Submit" && b.offsetParent !== null);
-      return createGone && submitGone;
+    // Task 7: after filling, detect the user actually submitting the form so
+    // the app can record a REAL submission (not just that we filled it).
+    //
+    // PRIMARY signal is the network: clicking the form's own Submit POSTs to
+    //   api.fillout.com/v1/flow/<thisFormId>/continue  with stepId "sZmQ" and
+    // the whole entries payload. Our own automation never hits that endpoint
+    // (entries are created through the subform iframe; the parent /continue
+    // fires only on the human's Submit click), so seeing it = a real submit.
+    // We arm the hooks only AFTER filling, so nothing we did can trip them.
+    // The DOM "controls gone" check below is kept as a best-effort fallback,
+    // and the manual "Mark submitted" toggle in the app is the last resort.
+    const onSubmitted = () => {
+      if (window.__ttSubmitted) return;
+      window.__ttSubmitted = true;
+      banner("✓ Submission detected — recorded in the app.", true);
+      report({ submittedConfirmed: true, added, addedIds });
     };
+    const formId = (location.pathname.match(/\/t\/([^/?#]+)/) || [])[1] || "";
+    const isFinalSubmit = (url) => {
+      try {
+        return !!formId && new RegExp("api\\.fillout\\.com/v1/flow/" + formId + "/continue").test(String(url));
+      } catch { return false; }
+    };
+    const _fetch = window.fetch;
+    window.fetch = function (input) {
+      const url = typeof input === "string" ? input : (input && input.url) || "";
+      const p = _fetch.apply(this, arguments);
+      if (isFinalSubmit(url)) p.then((r) => { if (r && r.ok) onSubmitted(); }).catch(() => {});
+      return p;
+    };
+    const _xopen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (m, url) { this.__ttUrl = url; return _xopen.apply(this, arguments); };
+    const _xsend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function () {
+      if (isFinalSubmit(this.__ttUrl)) {
+        this.addEventListener("load", () => { if (this.status >= 200 && this.status < 300) onSubmitted(); });
+      }
+      return _xsend.apply(this, arguments);
+    };
+
+    // Fallback: the form's own Create + Submit controls both disappearing.
     if (window.__ttWatch) clearInterval(window.__ttWatch);
     window.__ttWatch = setInterval(() => {
       try {
-        if (looksSubmitted()) {
-          clearInterval(window.__ttWatch);
-          banner("✓ Submission detected — recorded in the app.", true);
-          report({ submittedConfirmed: true, added, addedIds });
-        }
+        const createGone = ![...document.querySelectorAll("button,[role=button],a,div,span")]
+          .some((n) => norm(n.textContent) === "Create" && n.offsetParent !== null);
+        const submitGone = ![...document.querySelectorAll("button,[role=button]")]
+          .some((b) => norm(b.textContent) === "Submit" && b.offsetParent !== null);
+        if (createGone && submitGone) { clearInterval(window.__ttWatch); onSubmitted(); }
       } catch {}
     }, 1500);
   } catch (err) {
