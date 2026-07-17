@@ -314,18 +314,32 @@ function clearDraft() {
 // popups (can render cropped/off-screen and Chrome may tear down the popup
 // before a click registers), so use an in-DOM overlay instead.
 function showConfirm(message, yesLabel) {
+  return showDialog(message, yesLabel || "Yes, submit", null).then((r) => r === "yes");
+}
+// Three-way choice: resolves "yes" | "alt" | "cancel" (e.g. sync conflict).
+function showChoice(message, yesLabel, altLabel) {
+  return showDialog(message, yesLabel, altLabel);
+}
+function showDialog(message, yesLabel, altLabel) {
   return new Promise((resolve) => {
     $("confirmMsg").textContent = message;
-    $("confirmYes").textContent = yesLabel || "Yes, submit";
+    $("confirmYes").textContent = yesLabel;
+    const alt = $("confirmAlt");
+    if (alt) {
+      if (altLabel) { alt.textContent = altLabel; alt.classList.remove("hidden"); }
+      else alt.classList.add("hidden");
+    }
     $("confirmOverlay").classList.remove("hidden");
     const done = (result) => {
       $("confirmOverlay").classList.add("hidden");
       $("confirmYes").onclick = null;
       $("confirmNo").onclick = null;
+      if (alt) alt.onclick = null;
       resolve(result);
     };
-    $("confirmYes").onclick = () => done(true);
-    $("confirmNo").onclick = () => done(false);
+    $("confirmYes").onclick = () => done("yes");
+    $("confirmNo").onclick = () => done("cancel");
+    if (alt) alt.onclick = () => done("alt");
   });
 }
 function fillSelect(sel, items) {
