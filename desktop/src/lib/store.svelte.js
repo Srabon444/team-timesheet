@@ -3,7 +3,7 @@
 // is saved and the UI stays live.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { submitHeadless } from "./fillout-api.js";
 import {
   isPermissionGranted,
   requestPermission,
@@ -216,18 +216,25 @@ export async function submitToFillout(date) {
     description: e.description,
     hhmm: secToHHMM(e.accSec || 0),
   }));
-  const url = `${FORM_URL}?name=${encodeURIComponent(app.data.name)}`;
-  // Android/mobile is single-window, so the in-app auto-fill window (which
-  // needs a second webview) can't run there. Open the form in the device
-  // browser for manual entry instead; auto-fill stays a desktop feature.
+  // Android/mobile is single-window, so the desktop auto-fill window (a second
+  // webview) can't run. Instead submit straight to Fillout's HTTP API — no
+  // browser needed. Desktop keeps the webview automation (lets the human
+  // review before the real Submit); mobile trusts the local data.
   if (isMobile()) {
-    app.fill = { running: false, added: 0, error: "", message: "Opened the form in your browser — fill it in there, then Submit.", date };
-    try { await openUrl(url); } catch (e) {
-      app.fill = { ...app.fill, message: "", error: `Could not open the browser: ${e.message || e}` };
+    app.fill = { running: true, added: 0, message: "Submitting to Fillout…", error: "", date };
+    try {
+      const n = await submitHeadless(app.data.name, date, payload);
+      timer.markSubmitted(app.data, date, payload.map((p) => p.id));
+      markDaySubmitted(date, "auto");
+      save();
+      app.fill = { running: false, added: n, error: "", message: `Submitted ${n} entr${n === 1 ? "y" : "ies"} to Fillout ✓`, date };
+    } catch (e) {
+      app.fill = { running: false, added: 0, message: "", error: `Submit failed: ${e.message || e}`, date };
     }
     return;
   }
   app.fill = { running: true, added: 0, message: "Opening Fillout…", error: "", date };
+  const url = `${FORM_URL}?name=${encodeURIComponent(app.data.name)}`;
   await invoke("open_fillout", { url, script: buildFillScript(payload, app.data.name) });
 }
 
