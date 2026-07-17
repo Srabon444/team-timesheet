@@ -244,15 +244,19 @@ async function runner(entries, name) {
     // filled it). Best-effort heuristic — the manual "Mark submitted" toggle
     // in the app is the fallback when the form's success markup doesn't match.
     const looksSubmitted = () => {
-      const txt = norm(document.body.innerText).toLowerCase();
-      const successText = /(thank you|response (has been )?recorded|submission received|your response has|successfully submitted|form submitted|has been submitted)/.test(txt);
+      // The reliable terminal signal is the form's OWN controls disappearing:
+      // after a real final Submit the whole entries UI (both the "Create"
+      // button and the top-level "Submit" button) is replaced by a completion
+      // screen. We used to also require a "thank you"-style text match, but
+      // this form's completion screen doesn't contain any of those phrases, so
+      // detection never fired. Controls-gone is enough — the watch only starts
+      // AFTER our fill finishes (Create + Submit are present at that point), so
+      // both going away can only mean the user actually submitted.
       const createGone = ![...document.querySelectorAll("button,[role=button],a,div,span")]
         .some((n) => norm(n.textContent) === "Create" && n.offsetParent !== null);
       const submitGone = ![...document.querySelectorAll("button,[role=button]")]
         .some((b) => norm(b.textContent) === "Submit" && b.offsetParent !== null);
-      // Require the success text AND the form controls to be gone, so a stray
-      // "thank you" elsewhere on the page can't trigger a false positive.
-      return successText && createGone && submitGone;
+      return createGone && submitGone;
     };
     if (window.__ttWatch) clearInterval(window.__ttWatch);
     window.__ttWatch = setInterval(() => {
