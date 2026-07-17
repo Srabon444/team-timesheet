@@ -136,10 +136,18 @@ export function daySubmitted(date) {
   return app.data.submittedDays ? app.data.submittedDays[date] : null;
 }
 
-// ---------- confirm modal (promise-based, per-action Yes label) ----------
+// ---------- confirm modal (promise-based, per-action labels) ----------
+// showConfirm: yes/cancel, resolves boolean. showChoice: adds a middle "alt"
+// button, resolves "yes" | "alt" | "cancel" (e.g. sync conflict: keep this
+// device / pull from Drive / cancel).
 export function showConfirm(message, yesLabel = "Yes") {
   return new Promise((resolve) => {
-    app.confirm = { message, yesLabel, resolve };
+    app.confirm = { message, yesLabel, resolve: (r) => resolve(r === "yes") };
+  });
+}
+export function showChoice(message, yesLabel, altLabel) {
+  return new Promise((resolve) => {
+    app.confirm = { message, yesLabel, altLabel, resolve };
   });
 }
 export function answerConfirm(result) {

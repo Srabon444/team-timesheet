@@ -4,7 +4,7 @@
 // from the app origin. This module builds the same backup envelope + sync
 // logic as the extension's gdrive.js and drives it through invoke().
 import { invoke } from "@tauri-apps/api/core";
-import { app, save, showConfirm } from "./store.svelte.js";
+import { app, save, showChoice } from "./store.svelte.js";
 
 const FOLDER = "Team Timesheet Backups";
 
@@ -137,11 +137,13 @@ export async function gdSync(interactive) {
   if (!driveChanged && localChanged) return push();
   if (driveChanged && localChanged) {
     if (!interactive) return "sync-conflict";
-    const keepLocal = await showConfirm(
-      "This device and Google Drive both changed since the last sync.\n\nKeep THIS device's data (overwrite Drive)? No = keep Drive.",
-      "Keep this device"
+    const choice = await showChoice(
+      "This device and Google Drive both changed since the last sync.\n\nWhich copy do you want to keep?",
+      "Keep this device", // yes  → push (overwrite Drive)
+      "Pull from Drive"   // alt  → pull (overwrite this device)
     );
-    return keepLocal ? push() : pull();
+    if (choice === "cancel") return "Sync cancelled — nothing changed.";
+    return choice === "yes" ? push() : pull();
   }
   return "Already in sync.";
 }
