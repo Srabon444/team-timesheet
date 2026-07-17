@@ -230,8 +230,20 @@ pub fn run() {
                 }
                 let script = guard.as_ref().unwrap().script.clone();
                 drop(guard);
-                let _ = webview.eval(&script);
-                start_title_poll(app);
+                // Do NOT eval() synchronously inside the page-load callback.
+                // On Windows 11's WebView2, calling ExecuteScript re-entrantly
+                // from within a navigation/load event deadlocks the UI thread
+                // (the whole app + the Fillout window freeze, needing a kill).
+                // Win10's older runtime tolerated it. Deferring the injection
+                // off this callback stack — a short sleep, then eval (Tauri
+                // marshals it to the main thread itself) — breaks the
+                // re-entrancy while keeping the same inject-on-first-load flow.
+                let wv = webview.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                    let _ = wv.eval(&script);
+                    start_title_poll(app);
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![
