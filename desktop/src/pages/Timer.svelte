@@ -15,21 +15,24 @@
   nav.jumpDate = null;
   let tab = $state("timesheet");
   let modal = $state(null); // { entry|null, presetProject?, presetCategory? }
-  let menuOpen = $state(false);      // header quick-add menu visible?
-  let pinned = $state(false);        // clicked open (stays open); vs hover-open
-  let hoveredProject = $state(null); // which project's category submenu is open
+  // Quick-add menu opens on hover OR click. The menu sits flush under its
+  // trigger (no gap) and is a DOM child of the hover region, so moving the
+  // cursor into it never fires a leave — the old "vanishes when I reach for
+  // it" bug. Click pins it open (survives mouse-leave) until click-away.
+  let hovering = $state(false);
+  let clicked = $state(false);
+  let openProject = $state(null); // which project's category list is expanded
+  const menuOpen = $derived(hovering || clicked);
 
-  function openMenu() { menuOpen = true; }
-  function closeMenu() { if (!pinned) { menuOpen = false; hoveredProject = null; } }
-  function toggleMenu() { pinned = !pinned; menuOpen = pinned; if (!pinned) hoveredProject = null; }
-  // Tap a project to open its categories (touch has no hover); hover also works.
-  function pickProject(p) { hoveredProject = hoveredProject === p ? null : p; }
+  function enterMenu() { hovering = true; }
+  function leaveMenu() { hovering = false; if (!clicked) openProject = null; }
+  function toggleMenu() { clicked = !clicked; if (!clicked) openProject = null; }
+  function closeMenu() { hovering = false; clicked = false; openProject = null; }
+  function showCats(p) { openProject = p; } // hover or tap a project → its categories
 
   function openPreset(p, c) {
     selected = today;
-    menuOpen = false;
-    pinned = false;
-    hoveredProject = null;
+    closeMenu();
     modal = { entry: null, presetProject: p, presetCategory: c };
   }
 
@@ -94,38 +97,39 @@
   }
 </script>
 
-{#if menuOpen}
-  <!-- click-away closes the pinned menu -->
-  <div class="menu-backdrop" onclick={() => { pinned = false; menuOpen = false; hoveredProject = null; }} role="presentation"></div>
+{#if clicked}
+  <!-- click-away closes a pinned menu -->
+  <div class="menu-backdrop" onclick={closeMenu} role="presentation"></div>
 {/if}
 
 <div class="timer-head">
-  <!-- Big timer + a discoverable quick-add menu (hover on desktop, tap the
-       chevron on touch) → pick a project, then a category. -->
-  <div class="big-wrap" onmouseenter={openMenu} onmouseleave={closeMenu}>
+  <div class="big-wrap" onmouseenter={enterMenu} onmouseleave={leaveMenu}>
     <div class="big mono">{running ? secToHHMMSS(entryElapsed(running)) : "00:00:00"}</div>
-    <button class="quickadd" class:on={menuOpen} onclick={toggleMenu} title="Quick add a task" aria-label="Quick add a task">
+    <!-- Hover or click to quick-add: pick a project, then a category. -->
+    <button class="quickadd" class:on={menuOpen} onclick={toggleMenu} aria-label="Quick add a task">
       + Quick add ▾
     </button>
     {#if menuOpen}
       <div class="proj-menu">
         <div class="pm-head muted">Pick a project</div>
         {#each PROJECTS as p}
-          <button class="pm-row" class:open={hoveredProject === p}
-                  onmouseenter={() => (hoveredProject = p)} onclick={() => pickProject(p)}>
-            <span class="dot" style:background={projectColor(p)}></span>
-            <span class="pm-name">{p}</span>
-            <span class="chev">›</span>
-            {#if hoveredProject === p}
+          <div class="pm-item">
+            <button class="pm-row" class:open={openProject === p}
+                    onmouseenter={() => showCats(p)} onclick={() => showCats(p)}>
+              <span class="dot" style:background={projectColor(p)}></span>
+              <span class="pm-name">{p}</span>
+              <span class="chev">{openProject === p ? "▾" : "›"}</span>
+            </button>
+            {#if openProject === p}
               <div class="cat-menu">
                 {#each CATEGORIES as c}
-                  <button class="cm-row" onclick={(e) => { e.stopPropagation(); openPreset(p, c); }}>
+                  <button class="cm-row" onclick={() => openPreset(p, c)}>
                     <span class="dot" style:background={categoryColor(c)}></span>{c}
                   </button>
                 {/each}
               </div>
             {/if}
-          </button>
+          </div>
         {/each}
       </div>
     {/if}
@@ -291,38 +295,36 @@
   .quickadd:hover, .quickadd.on { border-color: var(--accent); color: var(--accent-light); background: var(--bg-surface-hover); }
 
   .menu-backdrop { position: fixed; inset: 0; z-index: 55; }
+  /* Sits flush under the trigger (no gap) so hovering across into it never
+     leaves the wrap. A transparent top border gives visual separation while
+     staying part of the hoverable box. */
   .proj-menu {
     position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
-    z-index: 60; margin-top: 8px;
-    min-width: 240px; max-height: 60vh; overflow-y: auto; padding: 6px;
-    background: var(--bg-surface); border: 1px solid var(--border-color);
+    z-index: 60;
+    border-top: 6px solid transparent; background-clip: padding-box;
+    min-width: 250px; max-height: 62vh; overflow-y: auto; padding: 6px;
+    background: var(--bg-surface); border-left: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color);
     border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.45);
   }
-  .pm-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; padding: 6px 10px 8px; }
+  .pm-head { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; padding: 4px 10px 8px; }
+  .pm-item { display: flex; flex-direction: column; }
   .pm-row {
-    position: relative; display: flex; align-items: center; gap: 9px; width: 100%;
+    display: flex; align-items: center; gap: 9px; width: 100%;
     padding: 10px 11px; border: none; background: none; border-radius: 8px;
     font-size: 13.5px; color: var(--text-primary); cursor: pointer; text-align: left;
   }
   .pm-row:hover, .pm-row.open { background: var(--bg-surface-hover); }
   .pm-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chev { color: var(--text-muted); font-size: 16px; }
-  .cat-menu {
-    position: absolute; top: -6px; left: 100%; margin-left: 6px;
-    min-width: 180px; padding: 6px; z-index: 61;
-    background: var(--bg-surface); border: 1px solid var(--border-color);
-    border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.45);
-  }
+  .chev { color: var(--text-muted); font-size: 15px; }
+  /* categories stack directly below the project (no side flyout to chase) */
+  .cat-menu { display: flex; flex-direction: column; margin: 2px 0 6px 10px; padding-left: 8px; border-left: 2px solid var(--border-color); }
   .cm-row {
     display: flex; align-items: center; gap: 9px; width: 100%;
-    padding: 10px 11px; border: none; background: none; border-radius: 8px;
-    color: var(--text-primary); font-size: 13.5px; cursor: pointer; text-align: left;
+    padding: 9px 10px; border: none; background: none; border-radius: 8px;
+    color: var(--text-secondary); font-size: 13px; cursor: pointer; text-align: left;
   }
-  .cm-row:hover { background: var(--bg-surface-hover); }
-  /* On narrow screens the flyout would overflow — stack it below instead. */
-  @media (max-width: 640px) {
-    .cat-menu { position: static; margin: 4px 0 4px 18px; box-shadow: none; }
-  }
+  .cm-row:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
 
   .playbig {
     width: 44px; height: 44px; border-radius: 50%;
