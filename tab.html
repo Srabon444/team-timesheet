@@ -173,6 +173,21 @@
           <p id="ioStatus" class="status"></p>
         </div>
 
+        <div class="settingsRow" style="display:block">
+          <div class="label">Google Drive backup</div>
+          <div class="desc">Back up to your own Google Drive (a "Team Timesheet Backups" folder).
+            A rolling <code>latest</code> file plus a dated snapshot each day. Restore any of them here.</div>
+          <div class="gdriveBtns">
+            <button id="gdConnect" class="btn" style="width:auto">Connect Google Drive</button>
+            <button id="gdBackup" class="btn primary" style="width:auto" disabled>Back up now</button>
+            <button id="gdRestore" class="btn" style="width:auto" disabled>Restore from Drive</button>
+            <button id="gdDisconnect" class="btn" style="width:auto" hidden>Disconnect</button>
+          </div>
+          <label class="gdAuto"><input type="checkbox" id="gdAutoBackup" /> Auto-back up once a day</label>
+          <div id="gdList" class="gdList hidden"></div>
+          <p id="gdStatus" class="status"></p>
+        </div>
+
         <div class="dangerZone">
           <div class="label">Reset everything</div>
           <div class="desc">Deletes all tasks, history, and settings. Cannot be undone. Your name is kept.</div>
@@ -194,6 +209,7 @@
   </div>
 
   <script src="popup.js"></script>
+  <script src="gdrive.js"></script>
   <script src="tab.js"></script>
 </body>
 </html>

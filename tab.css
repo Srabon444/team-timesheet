@@ -125,6 +125,22 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .settingsRow .desc { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
 .dangerZone { margin-top: 28px; padding: 16px; border: 1px solid var(--danger); border-radius: 8px; }
 
+/* Google Drive backup/restore controls */
+.gdriveBtns { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 6px; }
+.gdAuto { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); margin: 4px 0; }
+.gdAuto input { width: auto; }
+.gdList { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; max-height: 260px; overflow-y: auto; }
+.gdFile {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 10px 12px; text-align: left; cursor: pointer;
+  background: var(--bg-surface); border: 1px solid var(--border-color);
+  border-radius: var(--radius); color: var(--text-primary); font-size: 13px;
+  transition: border-color .12s ease, background .12s ease;
+}
+.gdFile:hover { border-color: var(--accent); background: var(--accent-tint); }
+.gdFile .gdName { font-weight: 600; font-variant-numeric: tabular-nums; }
+.gdFile .gdWhen { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+
 .weekNav { display: flex; align-items: center; gap: 14px; margin: 16px 0 10px; font-size: 15px; }
 .weekChart { display: flex; align-items: flex-end; gap: 10px; height: 180px; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
 .weekChart .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }

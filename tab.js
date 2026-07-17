@@ -130,6 +130,7 @@ function renderSettings() {
   document.getElementById("settingsNameInput").value = S.name || "";
   const ex = document.getElementById("exportBox");
   if (ex) ex.value = buildExportText();
+  if (typeof gdRefreshUI === "function") gdRefreshUI();
 }
 
 // ---- Backup / transfer (Task 1: manual bridge, same envelope as the app) ----
@@ -148,17 +149,15 @@ async function copyExport() {
     st.className = "status err"; st.textContent = "Copy failed — select the text and copy manually.";
   }
 }
-async function doImport() {
-  const st = document.getElementById("ioStatus");
-  st.className = "status";
-  let obj;
-  try { obj = JSON.parse(document.getElementById("importBox").value); }
-  catch { st.className = "status err"; st.textContent = "That's not valid JSON."; return; }
-  if (!obj || typeof obj.days !== "object" || obj.days === null) {
-    st.className = "status err"; st.textContent = "No 'days' data found in that text."; return;
-  }
+// Apply a parsed backup envelope (same shape as buildExportText / the app's
+// export). Confirms first, overwrites all tracked data, returns the day count
+// (or null if invalid / cancelled). Shared by paste-import and Drive-restore.
+async function applyImport(obj) {
+  if (!obj || typeof obj.days !== "object" || obj.days === null) return { error: "No 'days' data found." };
   const n = Object.keys(obj.days).length;
-  if (!(await showConfirm(`Replace all tracked data with this import (${n} day(s))? Current data is overwritten.`, "Yes, import"))) return;
+  if (!(await showConfirm(`Replace all tracked data with this backup (${n} day(s))? Current data is overwritten.`, "Yes, restore"))) {
+    return { cancelled: true };
+  }
   const today = todayStr();
   const history = {};
   let todays = [];
@@ -178,11 +177,105 @@ async function doImport() {
   await chrome.storage.local.set({
     history: S.history, entries: S.entries, timer: S.timer, date: today, name: S.name,
   });
-  document.getElementById("importBox").value = "";
-  st.className = "status ok"; st.textContent = `Imported ${n} day(s).`;
   renderSettings();
   render();          // popup.js — refresh Today panel
   renderDashboard();
+  return { n };
+}
+
+async function doImport() {
+  const st = document.getElementById("ioStatus");
+  st.className = "status";
+  let obj;
+  try { obj = JSON.parse(document.getElementById("importBox").value); }
+  catch { st.className = "status err"; st.textContent = "That's not valid JSON."; return; }
+  const res = await applyImport(obj);
+  if (res.error) { st.className = "status err"; st.textContent = res.error; return; }
+  if (res.cancelled) return;
+  document.getElementById("importBox").value = "";
+  st.className = "status ok"; st.textContent = `Imported ${res.n} day(s).`;
+}
+
+// ---- Google Drive backup/restore (gdrive.js provides the API calls) ----
+async function gdRefreshUI() {
+  if (typeof gdConnected !== "function") return; // gdrive.js not loaded (e.g. tests)
+  if (typeof S === "undefined" || !S || !document.getElementById("gdConnect")) return;
+  const connected = await gdConnected();
+  const st = document.getElementById("gdStatus");
+  document.getElementById("gdConnect").hidden = connected;
+  document.getElementById("gdDisconnect").hidden = !connected;
+  document.getElementById("gdBackup").disabled = !connected;
+  document.getElementById("gdRestore").disabled = !connected;
+  document.getElementById("gdAutoBackup").checked = !!S.gdAutoBackup;
+  if (!connected) { document.getElementById("gdList").classList.add("hidden"); if (st) st.textContent = ""; }
+}
+function gdSetStatus(msg, cls) {
+  const st = document.getElementById("gdStatus");
+  st.className = "status" + (cls ? " " + cls : "");
+  st.textContent = msg;
+}
+async function gdDoConnect() {
+  gdSetStatus("Connecting…");
+  try { await gdToken(true); gdSetStatus("Connected.", "ok"); await gdRefreshUI(); }
+  catch (e) { gdSetStatus(e.message || String(e), "err"); }
+}
+async function gdDoDisconnect() {
+  await gdDisconnect();
+  gdSetStatus("Disconnected.");
+  await gdRefreshUI();
+}
+async function gdDoBackup() {
+  gdSetStatus("Backing up…");
+  try {
+    const token = await gdToken(true);
+    await gdBackupNow(token, buildExportText());
+    S.gdLastBackup = todayStr();
+    await chrome.storage.local.set({ gdLastBackup: S.gdLastBackup });
+    gdSetStatus("Backed up to Google Drive ✓", "ok");
+  } catch (e) { gdSetStatus(e.message || String(e), "err"); }
+}
+async function gdDoRestore() {
+  gdSetStatus("Loading backups…");
+  const listEl = document.getElementById("gdList");
+  try {
+    const token = await gdToken(true);
+    const files = await gdListBackups(token);
+    if (!files.length) { gdSetStatus("No backups found in Drive.", "err"); return; }
+    gdSetStatus(`${files.length} backup(s) — pick one to restore.`);
+    listEl.classList.remove("hidden");
+    listEl.innerHTML = "";
+    for (const f of files) {
+      const when = f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : "";
+      const row = document.createElement("button");
+      row.className = "gdFile";
+      row.innerHTML = `<span class="gdName"></span><span class="gdWhen"></span>`;
+      row.querySelector(".gdName").textContent = f.name;
+      row.querySelector(".gdWhen").textContent = when;
+      row.onclick = async () => {
+        gdSetStatus(`Restoring ${f.name}…`);
+        try {
+          const text = await gdDownload(token, f.id);
+          const res = await applyImport(JSON.parse(text));
+          if (res.error) { gdSetStatus(res.error, "err"); return; }
+          if (res.cancelled) { gdSetStatus("Restore cancelled."); return; }
+          listEl.classList.add("hidden");
+          gdSetStatus(`Restored ${res.n} day(s) from ${f.name} ✓`, "ok");
+        } catch (e) { gdSetStatus(e.message || String(e), "err"); }
+      };
+      listEl.appendChild(row);
+    }
+  } catch (e) { gdSetStatus(e.message || String(e), "err"); }
+}
+// Auto-backup once per day, silently, if enabled and already connected.
+async function gdMaybeAutoBackup() {
+  if (typeof S === "undefined" || !S || !S.gdAutoBackup) return;
+  if (S.gdLastBackup === todayStr()) return;
+  try {
+    const token = await gdToken(false); // silent — no prompt on load
+    await gdBackupNow(token, buildExportText());
+    S.gdLastBackup = todayStr();
+    await chrome.storage.local.set({ gdLastBackup: S.gdLastBackup });
+  } catch (e) { /* not connected or offline — skip quietly */ }
 }
 
 async function resetEverything() {
@@ -239,6 +332,19 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("resetEverything").onclick = resetEverything;
   if (document.getElementById("copyExport")) document.getElementById("copyExport").onclick = copyExport;
   if (document.getElementById("doImport")) document.getElementById("doImport").onclick = doImport;
+  if (document.getElementById("gdConnect")) {
+    document.getElementById("gdConnect").onclick = gdDoConnect;
+    document.getElementById("gdDisconnect").onclick = gdDoDisconnect;
+    document.getElementById("gdBackup").onclick = gdDoBackup;
+    document.getElementById("gdRestore").onclick = gdDoRestore;
+    document.getElementById("gdAutoBackup").onchange = async (e) => {
+      S.gdAutoBackup = e.target.checked;
+      await chrome.storage.local.set({ gdAutoBackup: S.gdAutoBackup });
+      if (S.gdAutoBackup) gdMaybeAutoBackup();
+    };
+    // S loads async in init(); give it a moment, then auto-backup once/day.
+    setTimeout(gdMaybeAutoBackup, 1500);
+  }
   setupSearchSelect(
     document.getElementById("settingsNameInput"),
     document.getElementById("settingsNameList"),
