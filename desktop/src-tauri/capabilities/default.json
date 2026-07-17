@@ -13,7 +13,10 @@
     "notification:default",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://techzu.fillout.com/*" }]
+      "allow": [
+        { "url": "https://techzu.fillout.com/*" },
+        { "url": "https://accounts.google.com/*" }
+      ]
     }
   ]
 }
