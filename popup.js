@@ -104,6 +104,7 @@ async function init() {
   S.entries = S.entries || [];
   S.timer = S.timer || { activeId: null, startedAt: null };
   S.history = S.history || {};
+  S.submittedDays = S.submittedDays || {}; // { date: { at, method } } — Task 7
   S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
   const dailyLimitWasUnset = S.dailyLimitHours === undefined;
   S.dailyLimitHours = S.dailyLimitHours || 8;
@@ -204,6 +205,55 @@ function updateDayNav() {
   if (t) t.classList.toggle("hidden", isTodayView());
   const next = $("dayNext");
   if (next) next.disabled = isTodayView(); // no future days
+  updateSubmittedUI();
+}
+
+// ---- Day-submitted marking (Task 7: auto + manual, display only) ----
+function daySubmitted(date) {
+  return !!(S.submittedDays && S.submittedDays[date]);
+}
+async function markDaySubmitted(date, method) {
+  S.submittedDays = S.submittedDays || {};
+  S.submittedDays[date] = { at: Date.now(), method };
+  await chrome.storage.local.set({ submittedDays: S.submittedDays });
+  updateSubmittedUI();
+}
+async function unmarkDaySubmitted(date) {
+  if (S.submittedDays) delete S.submittedDays[date];
+  await chrome.storage.local.set({ submittedDays: S.submittedDays || {} });
+  updateSubmittedUI();
+}
+function updateSubmittedUI() {
+  const state = $("daySubmitState");
+  if (!state) return;
+  const done = daySubmitted(viewDate);
+  state.textContent = done ? "✅ Submitted" : "⬜ Not submitted";
+  state.className = "submitState" + (done ? " done" : "");
+  const btn = $("markSubmitBtn");
+  if (btn) btn.textContent = done ? "Unmark" : "Mark submitted";
+}
+// Injected into the form tab after a fill: watches for the "Thank you"
+// completion screen and records a REAL submission (method "auto") straight
+// to storage — the popup may be closed by the time the user hits Submit, so
+// this can't rely on it. Self-contained: no closure refs (executeScript
+// serializes it), content-script context has chrome.storage access.
+function watchForSubmit(date) {
+  if (window.__ttSubmitWatch) return;
+  window.__ttSubmitWatch = setInterval(() => {
+    try {
+      const txt = (document.body.innerText || "").toLowerCase();
+      const createGone = ![...document.querySelectorAll("button,[role=button],a,div,span")]
+        .some((n) => (n.textContent || "").trim() === "Create" && n.offsetParent !== null);
+      if (txt.includes("thank you") && createGone) {
+        clearInterval(window.__ttSubmitWatch);
+        chrome.storage.local.get(["submittedDays"]).then((g) => {
+          const sd = g.submittedDays || {};
+          sd[date] = { at: Date.now(), method: "auto" };
+          chrome.storage.local.set({ submittedDays: sd });
+        });
+      }
+    } catch (e) {}
+  }, 1500);
 }
 function setViewDate(dateStr) {
   if (!dateStr || dateStr > S.date) dateStr = S.date; // never past the live day
@@ -546,6 +596,11 @@ async function finalSubmit() {
     const addedCount = out ? out.added : 0;
     for (let i = 0; i < addedCount; i++) pending[i].submitted = true;
     if (addedCount > 0) { await persistCurrent(); render(); }
+    // Auto-detect the user's real Submit (Task 7): leave a watcher in the form
+    // tab that marks this day submitted when the "Thank you" screen appears.
+    if (addedCount > 0) {
+      try { await chrome.scripting.executeScript({ target: { tabId }, func: watchForSubmit, args: [viewDate] }); } catch (e) {}
+    }
     if (out && out.error) {
       st.className = "status err";
       st.textContent = "Stopped: " + out.error + ` (${addedCount} added)`;
@@ -869,6 +924,17 @@ document.addEventListener("DOMContentLoaded", () => {
   if ($("todayBtn")) $("todayBtn").onclick = () => setViewDate(S.date);
   if ($("viewDateInput")) $("viewDateInput").onchange = (e) => setViewDate(e.target.value);
   $("finalSubmit").onclick = finalSubmit;
+  if ($("markSubmitBtn")) $("markSubmitBtn").onclick = () =>
+    daySubmitted(viewDate) ? unmarkDaySubmitted(viewDate) : markDaySubmitted(viewDate, "manual");
+  // Reflect an auto-mark written by the form-tab watcher while the popup is open.
+  if (chrome.storage.onChanged && chrome.storage.onChanged.addListener) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && changes.submittedDays) {
+        S.submittedDays = changes.submittedDays.newValue || {};
+        updateSubmittedUI();
+      }
+    });
+  }
   setupSearchSelect($("projSelect"), $("projList"), () => PROJECTS);
   setupSearchSelect($("nameSelect"), $("nameList"), () => S.names || []);
   init();
