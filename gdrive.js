@@ -118,3 +118,101 @@ async function gdDownload(token, id) {
   const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
   return r.text();
 }
+
+// ---- Cross-device sync ------------------------------------------------------
+// The rolling timesheet-latest.json IS the sync anchor. Each device compares a
+// content SIGNATURE of its own data (so no per-mutation bookkeeping is needed)
+// against the last-synced signature, and the Drive file's version (its
+// envelope's exportedAt) against the last-synced version:
+//   drive changed only  -> pull        local changed only -> push
+//   both changed        -> ask which to keep (real conflict)
+//   neither             -> already in sync
+// Auto-pull/-push never lose data silently; only a true conflict prompts.
+
+// Stable signature of the days map (order-independent over dates).
+function gdSig(days) {
+  const keys = Object.keys(days || {}).sort();
+  const norm = keys.map((k) => [k, days[k]]);
+  const s = JSON.stringify(norm);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return String(h >>> 0);
+}
+
+async function gdFindLatest(token, folderId) {
+  const q = encodeURIComponent(`name='timesheet-latest.json' and '${folderId}' in parents and trashed=false`);
+  const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const j = await r.json();
+  if (!j.files || !j.files.length) return null;
+  const id = j.files[0].id;
+  return { id, content: await gdDownload(token, id) };
+}
+async function gdWriteLatest(token, folderId, id, text) {
+  if (id) return gdUpdateFile(token, id, text);
+  return gdCreateFile(token, folderId, "timesheet-latest.json", text);
+}
+async function gdMarkSynced(at, sig) {
+  S.gdSyncedAt = at;
+  S.gdSyncedSig = sig;
+  await chrome.storage.local.set({ gdSyncedAt: at, gdSyncedSig: sig });
+}
+// Returns true = keep this device, false = keep Drive.
+async function gdConflictPrompt() {
+  return showConfirm(
+    "This device and Google Drive both changed since the last sync.\n\n" +
+      "Keep THIS device's data (and overwrite Drive)?\nChoosing No keeps Drive's data instead.",
+    "Keep this device"
+  );
+}
+
+// interactive=false → silent (skip if not connected). Returns a short status
+// string describing what happened, or "" if nothing/not connected.
+async function gdSync(interactive) {
+  if (typeof buildExportText !== "function") return ""; // not in a data context
+  let token;
+  try { token = await gdToken(!!interactive); } catch (e) { return interactive ? "Not connected." : ""; }
+
+  const folderId = await gdEnsureFolder(token);
+  const latest = await gdFindLatest(token, folderId);
+  const localObj = JSON.parse(buildExportText());
+  const localSig = gdSig(localObj.days);
+  const syncedAt = S.gdSyncedAt || 0;
+  const syncedSig = S.gdSyncedSig || "";
+  const localChanged = localSig !== syncedSig;
+
+  if (!latest) {
+    await gdWriteLatest(token, folderId, null, JSON.stringify(localObj, null, 2));
+    await gdMarkSynced(localObj.exportedAt, localSig);
+    return "Synced (pushed to Drive).";
+  }
+
+  let driveObj;
+  try { driveObj = JSON.parse(latest.content); } catch (e) { driveObj = null; }
+  if (!driveObj || typeof driveObj.days !== "object") {
+    await gdWriteLatest(token, folderId, latest.id, JSON.stringify(localObj, null, 2));
+    await gdMarkSynced(localObj.exportedAt, localSig);
+    return "Synced (pushed to Drive).";
+  }
+  const driveAt = driveObj.exportedAt || 0;
+  const driveChanged = driveAt !== syncedAt;
+
+  const pull = async () => {
+    await applyBackupData(driveObj);
+    await gdMarkSynced(driveAt, gdSig(driveObj.days));
+    return "Synced (pulled from Drive).";
+  };
+  const push = async () => {
+    const fresh = JSON.parse(buildExportText());
+    await gdWriteLatest(token, folderId, latest.id, JSON.stringify(fresh, null, 2));
+    await gdMarkSynced(fresh.exportedAt, gdSig(fresh.days));
+    return "Synced (pushed to Drive).";
+  };
+
+  if (driveChanged && !localChanged) return pull();
+  if (!driveChanged && localChanged) return push();
+  if (driveChanged && localChanged) {
+    if (!interactive) return "sync-conflict"; // don't prompt on silent open; caller re-runs interactively
+    return (await gdConflictPrompt()) ? push() : pull();
+  }
+  return "Already in sync.";
+}

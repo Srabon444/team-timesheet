@@ -57,9 +57,8 @@ function weekDates(mondayStr) {
 function weekTotals(daysMap, mondayStr) {
   return weekDates(mondayStr).map((date) => ({ date, total: dayTotal(daysMap[date]) }));
 }
-function buildDaysMap() {
-  return { ...S.history, [S.date]: S.entries.map((e) => ({ ...e, accSec: elapsedSec(e) })) };
-}
+// buildDaysMap / buildExportText / applyBackupData live in popup.js now (shared
+// with the popup and gdrive.js sync). tab.js just uses them as globals.
 
 let weekOffset = 0; // 0 = week containing today, -1 = previous week, etc.
 
@@ -134,12 +133,6 @@ function renderSettings() {
 }
 
 // ---- Backup / transfer (Task 1: manual bridge, same envelope as the app) ----
-function buildExportText() {
-  return JSON.stringify(
-    { app: "team-timesheet", v: 1, exportedAt: Date.now(), name: S.name || "", days: buildDaysMap() },
-    null, 2
-  );
-}
 async function copyExport() {
   const st = document.getElementById("ioStatus");
   try {
@@ -158,28 +151,7 @@ async function applyImport(obj) {
   if (!(await showConfirm(`Replace all tracked data with this backup (${n} day(s))? Current data is overwritten.`, "Yes, restore"))) {
     return { cancelled: true };
   }
-  const today = todayStr();
-  const history = {};
-  let todays = [];
-  for (const [date, list] of Object.entries(obj.days)) {
-    const clean = (Array.isArray(list) ? list : []).map((e) => ({
-      id: e.id || crypto.randomUUID(),
-      project: e.project, category: e.category, description: e.description,
-      accSec: e.accSec || 0, submitted: !!e.submitted,
-    }));
-    if (date === today) todays = clean; else history[date] = clean;
-  }
-  S.history = history;
-  S.entries = todays;
-  S.timer = { activeId: null, startedAt: null }; // never import a running timer
-  S.date = today;
-  if (obj.name && !S.name) S.name = obj.name;
-  await chrome.storage.local.set({
-    history: S.history, entries: S.entries, timer: S.timer, date: today, name: S.name,
-  });
-  renderSettings();
-  render();          // popup.js — refresh Today panel
-  renderDashboard();
+  await applyBackupData(obj); // popup.js — overwrite + refresh views
   return { n };
 }
 
@@ -204,6 +176,7 @@ async function gdRefreshUI() {
   const st = document.getElementById("gdStatus");
   document.getElementById("gdConnect").hidden = connected;
   document.getElementById("gdDisconnect").hidden = !connected;
+  document.getElementById("gdSyncBtn").disabled = !connected;
   document.getElementById("gdBackup").disabled = !connected;
   document.getElementById("gdRestore").disabled = !connected;
   document.getElementById("gdAutoBackup").checked = !!S.gdAutoBackup;
@@ -223,6 +196,14 @@ async function gdDoDisconnect() {
   await gdDisconnect();
   gdSetStatus("Disconnected.");
   await gdRefreshUI();
+}
+async function gdDoSync() {
+  gdSetStatus("Syncing…");
+  try {
+    const r = await gdSync(true);
+    gdSetStatus(r || "Done.", "ok");
+    await gdRefreshUI();
+  } catch (e) { gdSetStatus(e.message || String(e), "err"); }
 }
 async function gdDoBackup() {
   gdSetStatus("Backing up…");
@@ -335,6 +316,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (document.getElementById("gdConnect")) {
     document.getElementById("gdConnect").onclick = gdDoConnect;
     document.getElementById("gdDisconnect").onclick = gdDoDisconnect;
+    document.getElementById("gdSyncBtn").onclick = gdDoSync;
     document.getElementById("gdBackup").onclick = gdDoBackup;
     document.getElementById("gdRestore").onclick = gdDoRestore;
     document.getElementById("gdAutoBackup").onchange = async (e) => {

@@ -130,6 +130,12 @@ async function init() {
   }
   document.documentElement.dataset.theme = resolveTheme(S.theme);
   route();
+  // Cross-device sync: silently sync with Google Drive on open (if connected).
+  // A true conflict returns "sync-conflict"; re-run interactively to prompt
+  // (token is already cached, so no OAuth popup just to ask).
+  if (typeof gdSync === "function") {
+    gdSync(false).then((r) => { if (r === "sync-conflict") gdSync(true); }).catch(() => {});
+  }
 }
 
 // ---------- timer engine (one active at a time) ----------
@@ -546,6 +552,56 @@ async function saveName() {
   showMain();
 }
 
+// ---------- backup / sync data helpers (shared by popup + tab + gdrive.js) ----------
+// Kept in popup.js so both the popup and the full tab view (and the Drive sync
+// module) can build/apply the transfer envelope — the same shape the desktop
+// app and the manual paste bridge use.
+function buildDaysMap() {
+  return { ...S.history, [S.date]: S.entries.map((e) => ({ ...e, accSec: elapsedSec(e) })) };
+}
+function buildExportText() {
+  return JSON.stringify(
+    { app: "team-timesheet", v: 1, exportedAt: Date.now(), name: S.name || "", days: buildDaysMap() },
+    null, 2
+  );
+}
+// Overwrite all tracked data from a parsed envelope (no confirm — callers
+// confirm/decide). Refreshes whatever views exist in this context.
+async function applyBackupData(obj) {
+  const today = todayStr();
+  const history = {};
+  let todays = [];
+  for (const [date, list] of Object.entries(obj.days || {})) {
+    const clean = (Array.isArray(list) ? list : []).map((e) => ({
+      id: e.id || crypto.randomUUID(),
+      project: e.project, category: e.category, description: e.description,
+      accSec: e.accSec || 0, submitted: !!e.submitted,
+    }));
+    if (date === today) todays = clean; else history[date] = clean;
+  }
+  S.history = history;
+  S.entries = todays;
+  S.timer = { activeId: null, startedAt: null }; // never import a running timer
+  S.date = today;
+  if (obj.name && !S.name) S.name = obj.name;
+  await chrome.storage.local.set({
+    history: S.history, entries: S.entries, timer: S.timer, date: today, name: S.name,
+  });
+  refreshDataViews();
+}
+function refreshDataViews() {
+  if (typeof render === "function") render();
+  if (typeof renderSettings === "function") renderSettings();
+  if (typeof renderDashboard === "function") renderDashboard();
+}
+// Debounced push after local edits (gdrive.js provides gdSync; absent in tests).
+let gdSyncTimer = null;
+function gdSyncSoon() {
+  if (typeof gdSync !== "function") return;
+  clearTimeout(gdSyncTimer);
+  gdSyncTimer = setTimeout(() => { gdSync(false).catch(() => {}); }, 2500);
+}
+
 // ---------- final submit ----------
 async function finalSubmit() {
   const st = $("submitStatus");
@@ -929,10 +985,15 @@ document.addEventListener("DOMContentLoaded", () => {
   // Reflect an auto-mark written by the form-tab watcher while the popup is open.
   if (chrome.storage.onChanged && chrome.storage.onChanged.addListener) {
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && changes.submittedDays) {
+      if (area !== "local") return;
+      if (changes.submittedDays) {
         S.submittedDays = changes.submittedDays.newValue || {};
         updateSubmittedUI();
       }
+      // Push local edits to Drive shortly after any data change. A pull writes
+      // the same keys, but gdSync's signature check makes the follow-up a
+      // no-op, so there's no pull↔push loop.
+      if (changes.entries || changes.history || changes.date || changes.name) gdSyncSoon();
     });
   }
   setupSearchSelect($("projSelect"), $("projList"), () => PROJECTS);

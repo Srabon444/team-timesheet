@@ -174,12 +174,15 @@
         </div>
 
         <div class="settingsRow" style="display:block">
-          <div class="label">Google Drive backup</div>
-          <div class="desc">Back up to your own Google Drive (a "Team Timesheet Backups" folder).
-            A rolling <code>latest</code> file plus a dated snapshot each day. Restore any of them here.</div>
+          <div class="label">Google Drive sync &amp; backup</div>
+          <div class="desc">Sign in to sync this data across your devices (extension, desktop, mobile)
+            on the same Google account — auto-syncs on open and after edits, and asks which to keep if
+            two devices changed. Backups (a rolling <code>latest</code> file + dated snapshots) live in a
+            "Team Timesheet Backups" folder in your own Drive; restore any of them here.</div>
           <div class="gdriveBtns">
             <button id="gdConnect" class="btn" style="width:auto">Connect Google Drive</button>
-            <button id="gdBackup" class="btn primary" style="width:auto" disabled>Back up now</button>
+            <button id="gdSyncBtn" class="btn primary" style="width:auto" disabled>Sync now</button>
+            <button id="gdBackup" class="btn" style="width:auto" disabled>Back up now</button>
             <button id="gdRestore" class="btn" style="width:auto" disabled>Restore from Drive</button>
             <button id="gdDisconnect" class="btn" style="width:auto" hidden>Disconnect</button>
           </div>
