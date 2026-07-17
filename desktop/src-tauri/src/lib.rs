@@ -1,3 +1,5 @@
+mod gdrive;
+
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -89,8 +91,7 @@ async fn fillout_post(url: String, body: String) -> Result<String, String> {
 }
 
 /// Open (or refocus) the Fillout window and queue the fill script. The
-/// actual injection happens in on_page_load below, after the reload-first
-/// sequence completes.
+/// actual injection happens in on_page_load below, on the first page load.
 #[tauri::command]
 fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), String> {
     if !url.starts_with(FILLOUT_ORIGIN) {
@@ -238,7 +239,11 @@ pub fn run() {
             save_data,
             fetch_form_html,
             fillout_post,
-            open_fillout
+            open_fillout,
+            gdrive::gdrive_connected,
+            gdrive::gdrive_connect,
+            gdrive::gdrive_disconnect,
+            gdrive::gdrive_api
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -46,6 +46,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Drive OAuth secret, compiled in via option_env! (kept out of source).
+          GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
         with:
           projectPath: desktop
           tagName: ${{ steps.tag.outputs.tag }}
