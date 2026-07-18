@@ -846,7 +846,7 @@ async function harness5() {
     // still on setup (no names loaded in this harness) — set name directly via storage + reinit
   }
   store.name = "Debjit Paul";
-  store.date = "2026-07-10";
+  store.date = win.todayStr(); // the "live" day, or init()'s daily reset archives this seed away
   store.entries = [{ id: "e1", project: "ZuPOS", category: "Development", description: "x", accSec: 3600 }];
   store.timer = { activeId: null, startedAt: null };
   await win.init();
