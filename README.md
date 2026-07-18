@@ -1,118 +1,134 @@
-# Daily Timesheet Auto-Filler
+# Team Timesheet
 
-A Chrome extension that turns filling out the Techzu **Daily Timesheet Form**
-(hosted on Fillout) into a popup with per-project timers, then automates
-entering that data into the live form for you — stopping right before the
-form's own final Submit so you always review before sending.
+Track time per project across **Chrome, Desktop (Windows/macOS/Linux), and
+Android** — synced to your own Google Drive — and auto-fill the Techzu
+**Daily Timesheet Form** (hosted on Fillout) so you're never retyping the
+same entries into a web form by hand.
 
 ## Why
 
 The form requires, for every project worked on that day: picking your name,
 clicking "Create", selecting a project + work category, typing a task
 description, and typing the time worked as `hh:mm` — then repeating that for
-each project. This extension replaces the manual repetition with: start a
-timer when you begin a task, switch timers as you switch projects, and hit
-one button at the end of the day to have it all typed in for you.
+each project. This app replaces the manual repetition with: start a timer
+when you begin a task, switch timers as you switch projects, and hit one
+button at the end of the day to have it all filled in for you — **you always
+review before the form's own final Submit is clicked**, the app never clicks
+it for you.
+
+## The three apps
+
+One project, three products, sharing the same domain logic and data format
+so they interoperate:
+
+| App | Platform | Get it |
+|---|---|---|
+| **Chrome extension** | Any Chromium browser | Load unpacked from this repo (see below) |
+| **Desktop app** | Windows · macOS · Linux | [Releases](../../releases) — installer per OS |
+| **Android app** | Android (arm64) | [Releases](../../releases) — debug APK |
+
+All three track the same 11 projects / 5 categories, run independent timers,
+and drive the same Fillout automation. Desktop/Android releases are fully
+automated — every push builds fresh installers and keeps only the latest.
 
 ## Features
 
-- **Per-project timers** — start/pause, only one active at a time (starting
-  one automatically pauses whichever was running). Elapsed time is tracked as
-  timestamps in storage, so it survives closing the popup or restarting the
-  browser.
-- **Toolbar badge** — shows live elapsed time (`23m`, `2h`) with a green/gray
-  background so you can tell at a glance whether a timer is running without
-  opening the popup. Hover the icon for the exact `hh:mm:ss` and project name.
-- **Searchable pickers** — your name (21 people) and the project list are
-  typeahead comboboxes (substring search, click or Enter to pick), not a
-  plain dropdown you have to scroll.
-- **Add / Edit / Delete** project entries for the day, each with an editable
-  `hh:mm` time.
-- **Daily reset** — switching to a new date clears the day's project entries
-  and timers automatically, but remembers your name and your last-used
-  project/category as defaults.
-- **Draft persistence** — a half-filled "add project" form (or an in-progress
-  edit) survives closing the popup, so switching tabs mid-entry doesn't lose
-  your typing.
-- **Final Submit automation** — drives the real Fillout form: opens/focuses
-  the tab, selects your name, and for each project clicks *Create*, fills in
-  the project/category/description/time inside the form's own popup subform,
-  and clicks *that* subform's Submit to add the entry. It **never** clicks
-  the main form's final Submit button — you always do that manually after
-  reviewing the entries.
-
-## Tech used
-
-- **Manifest V3** Chrome extension — no build step, no bundler, no
-  dependencies. Plain HTML/CSS/JS.
-- `chrome.storage.local` for all state (timers, entries, name, drafts).
-- `chrome.scripting.executeScript` for page automation, including
-  **cross-frame** injection (`allFrames` + discovered `frameIds`) — the
-  form's "Create" button opens the project/category/description/time fields
-  inside a genuine `<iframe>` subform, a separate document from the main
-  page, so automation has to run there directly rather than in the top frame.
-- `chrome.alarms` + `chrome.storage.onChanged` in a background service worker
-  to keep the toolbar badge live even while the popup is closed, without
-  polling.
-- The live form's dropdowns are [react-select](https://react-select.com/);
-  automation drives them by setting the input value and dispatching a
-  synthetic `Enter` keydown, the same way typing-to-search and pressing Enter
-  works for a human user.
+- **Per-project timers** — start/pause, only one active at a time. Time is
+  tracked as timestamps, so it survives closing the app or restarting the
+  browser/device.
+- **Previous-day entry** — back-fill or correct an earlier day's time, not
+  just today's.
+- **Final Submit automation** — drives the real Fillout form for you: selects
+  your name, and for each project clicks *Create*, fills in the
+  project/category/description/time, and submits *that* entry's subform. It
+  never clicks the main form's own final Submit — that's always a manual,
+  reviewed step. On Android, this runs headless (a direct API call, since
+  there's no embedded browser window) but the same review-first spirit
+  applies: you fill locally, then send.
+- **Submission tracking** — the app detects when you've actually clicked the
+  form's real Submit (a network signal on desktop, a DOM signal on the
+  extension) and marks the day as submitted for reference, without disabling
+  anything if the detection ever guesses wrong.
+- **Google Drive sync & backup** — optionally sign in with Google to sync
+  your tracked data across every device on the same account (desktop ↔
+  mobile ↔ extension), auto-syncing on open and after edits. If two devices
+  changed independently, you're asked which to keep. A rolling `latest`
+  backup plus dated snapshots live in a private "Team Timesheet Backups"
+  folder in *your own* Drive — nothing is stored on a server we run.
+- **Manual export/import bridge** — copy-paste a JSON snapshot between any
+  two installs without Google, if you'd rather not connect an account.
+- **Dashboard** — a weekly chart, stat tiles (today / all-time / daily
+  average / busiest day), and time breakdowns by project and category.
+- **Daily limit notifications**, **dark/light/system theme**, and a
+  **searchable name/project picker** instead of long dropdowns.
 
 ## Install
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode** (top right).
-3. Click **Load unpacked** and select this folder.
-4. Pin the extension for quick access to the timer badge.
+### Chrome extension
+1. `chrome://extensions` → enable **Developer mode**.
+2. **Load unpacked** → select the repo root (this checks out the `master`
+   branch's root files).
+3. Pin the extension for quick access.
 
-## Use
+### Desktop (Windows / macOS / Linux)
+Download the latest installer for your OS from the [Releases](../../releases)
+page (`.deb`/`.AppImage`, `.msi`/`.exe`, or `.dmg`) and install normally.
+macOS builds are unsigned — right-click → Open the first time to bypass
+Gatekeeper.
 
-1. **First run**: click the extension icon → **Load names from form** → pick
-   your name from the list → **Save**.
-2. **Add a project**: pick a project and work category (both searchable —
-   just start typing), enter a task description (required), click
-   **+ Add Project**.
-3. **Track time**: click the ▶ on a project to start its timer, ❚❚ to pause.
-   Only one timer runs at a time. Edit the `hh:mm` field directly if you need
-   to correct it.
-4. Add more projects throughout the day as needed. Use **Edit** on an entry
-   to change its project/category/description without losing its tracked
-   time.
-5. **End of day**: click the red **Final Submit** button, review the
-   confirmation, confirm. The extension opens the form (or reuses an already
-   open tab), selects your name, and adds every entry for you.
-6. **You still click the form's own Submit yourself** after reviewing the
-   entries it added — the extension deliberately never does this for you.
+### Android
+Download the debug APK from [Releases](../../releases) and install via
+"unknown sources." Auto-fill runs headless (no browser window needed); Final
+Submit posts your entries directly.
 
-On a new date, the previous day's entries and timers clear automatically;
-your name and last-used project/category stay as defaults.
+## Cross-device sync
 
-## Dashboard & Settings (tab view)
+Sign in with Google from any app's **Settings** to sync your tracked data
+across all your devices on that same account:
 
-Click **Open full view ⤢** in the popup (next to "change") to open a full
-browser tab with three sections, sharing live data with the popup:
+- Data lives in **your own** Google Drive (`drive.file` scope — the app can
+  only see files it created, nothing else in your Drive), in a "Team
+  Timesheet Backups" folder.
+- Syncs automatically when you open the app and shortly after you make
+  changes; if two devices both changed since the last sync, you're asked
+  which copy to keep.
+- **Back up now** / **Restore from Drive** are also available manually if you
+  want an on-demand snapshot or to roll back to an earlier one.
+- This is entirely optional — everything works fully offline without it, and
+  the manual copy-paste export/import bridge covers moving data between
+  installs without a Google account.
 
-- **Today** — the same add-project/timer/Final Submit flow as the popup, just
-  in a wider layout.
-- **Dashboard** — a Mon–Sun weekly chart (browse past weeks with `<`/`>`),
-  stat tiles (today / all-time total / daily average / busiest day), and
-  time breakdowns by project and by work category. Past days are kept in a
-  history log so these stats survive the daily reset that otherwise clears
-  the working entry list.
-- **Settings** — change your name, set a daily hour limit (fires a one-time
-  OS notification when crossed), toggle confirm-before-delete, switch
-  Dark/Light/System theme, or reset everything (keeps your name).
+## Repo structure
 
-## Files
+This repo hosts all three apps across branches, since desktop/Android need
+OS-specific packaging and release workflows the extension doesn't:
 
-| File | Purpose |
+| Branch | Contains |
 |---|---|
-| `manifest.json` | Extension configuration (MV3) |
-| `popup.html` / `popup.css` | Popup UI |
-| `popup.js` | All popup logic: storage, timers, UI, search comboboxes, and the form-filling automation |
-| `background.js` | Service worker — keeps the toolbar badge in sync with the running timer |
-| `icons/` | Extension icon |
-| `tab.html` / `tab.css` / `tab.js` | Full tab view: sidebar nav, Dashboard, Settings. Reuses `popup.js` verbatim for the Today section. |
-| `theme.css` | CSS custom properties (dark default, light override), consumed by both `popup.css` and `tab.css` |
-| `test/` | Node + jsdom regression suite (`npm test`) |
+| `master` | Chrome extension (root files) |
+| `desktop-linux` | Desktop app (Tauri 2 + Svelte 5), Linux packaging |
+| `desktop-windows` | Same app, Windows packaging |
+| `desktop-mac` | Same app, macOS packaging |
+| `desktop-android` | Same app, Android (Tauri mobile) packaging |
+
+See [CLAUDE.md](CLAUDE.md) for the full branch/release model and shared
+domain facts, [ARCHITECTURE.md](ARCHITECTURE.md) for the extension's internal
+structure, and `desktop/ARCHITECTURE.md` (on the desktop branches) for the
+desktop/Android app's.
+
+## Development
+
+```bash
+# Extension (root, master)
+npm test                       # node test/smoke.js (jsdom), must print "SMOKE: ALL PASS"
+
+# Desktop / Android (desktop/ on desktop-* branches)
+cd desktop
+npm test                       # vitest
+npm run tauri dev              # live desktop app
+npm run tauri android dev      # live Android app (needs Android SDK/NDK)
+```
+
+Releases build automatically in CI on every push to a `desktop-*` branch
+that touches `desktop/**` — see the branch/release model in
+[CLAUDE.md](CLAUDE.md).
