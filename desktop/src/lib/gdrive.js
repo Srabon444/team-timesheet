@@ -24,20 +24,26 @@ async function apiJson(method, url, body, contentType) {
 }
 
 function buildEnvelope() {
-  return { app: "team-timesheet", v: 1, exportedAt: Date.now(), name: app.data.name || "", days: app.data.days || {} };
+  return {
+    app: "team-timesheet", v: 1, exportedAt: Date.now(), name: app.data.name || "",
+    days: app.data.days || {}, submittedDays: app.data.submittedDays || {},
+  };
 }
 function applyEnvelope(obj) {
   app.data.days = obj.days || {};
+  app.data.submittedDays = obj.submittedDays || {};
   app.data.timer = { activeId: null, startedAt: null, date: null }; // never import a running timer
   if (obj.name && !app.data.name) app.data.name = obj.name;
   save();
 }
 
-// Stable, order-independent signature of the days map (djb2). Lets us detect
-// "local changed since last sync" without instrumenting every mutation.
-function sig(days) {
-  const keys = Object.keys(days || {}).sort();
-  const s = JSON.stringify(keys.map((k) => [k, days[k]]));
+// Stable, order-independent signature of days + submittedDays (djb2). Lets us
+// detect "local changed since last sync" without instrumenting every
+// mutation. Both maps are hashed so a submitted-mark-only change (no entry
+// edits) still registers as a change and gets pushed.
+function sig(days, submittedDays) {
+  const norm = (m) => Object.keys(m || {}).sort().map((k) => [k, m[k]]);
+  const s = JSON.stringify([norm(days), norm(submittedDays)]);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return String(h >>> 0);
@@ -98,7 +104,7 @@ export async function gdRestoreFile(id) {
   const obj = JSON.parse(text);
   if (!obj || typeof obj.days !== "object") throw new Error("That file isn't a valid backup.");
   applyEnvelope(obj);
-  await markSynced(obj.exportedAt || Date.now(), sig(obj.days));
+  await markSynced(obj.exportedAt || Date.now(), sig(obj.days, obj.submittedDays));
 }
 
 async function writeLatest(folderId, id, text) {
@@ -118,7 +124,7 @@ export async function gdSync(interactive) {
   const folderId = await ensureFolder();
   const latest = await findLatest(folderId);
   const localObj = buildEnvelope();
-  const localSig = sig(localObj.days);
+  const localSig = sig(localObj.days, localObj.submittedDays);
   const localChanged = localSig !== (app.data.gdSyncedSig || "");
 
   if (!latest) { await writeLatest(folderId, null, JSON.stringify(localObj, null, 2)); markSynced(localObj.exportedAt, localSig); return "Synced (pushed to Drive)."; }
@@ -130,8 +136,8 @@ export async function gdSync(interactive) {
   const driveAt = driveObj.exportedAt || 0;
   const driveChanged = driveAt !== (app.data.gdSyncedAt || 0);
 
-  const pull = async () => { applyEnvelope(driveObj); markSynced(driveAt, sig(driveObj.days)); return "Synced (pulled from Drive)."; };
-  const push = async () => { const fresh = buildEnvelope(); await writeLatest(folderId, latest.id, JSON.stringify(fresh, null, 2)); markSynced(fresh.exportedAt, sig(fresh.days)); return "Synced (pushed to Drive)."; };
+  const pull = async () => { applyEnvelope(driveObj); markSynced(driveAt, sig(driveObj.days, driveObj.submittedDays)); return "Synced (pulled from Drive)."; };
+  const push = async () => { const fresh = buildEnvelope(); await writeLatest(folderId, latest.id, JSON.stringify(fresh, null, 2)); markSynced(fresh.exportedAt, sig(fresh.days, fresh.submittedDays)); return "Synced (pushed to Drive)."; };
 
   if (driveChanged && !localChanged) return pull();
   if (!driveChanged && localChanged) return push();
