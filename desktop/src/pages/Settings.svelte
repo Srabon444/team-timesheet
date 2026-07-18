@@ -23,7 +23,10 @@
   // text pastes into the Chrome extension's Import box.
   const exportText = $derived(
     JSON.stringify(
-      { app: "team-timesheet", v: 1, exportedAt: Date.now(), name: app.data.name, days: app.data.days },
+      {
+        app: "team-timesheet", v: 1, exportedAt: Date.now(), name: app.data.name,
+        days: app.data.days, submittedDays: app.data.submittedDays,
+      },
       null, 2
     )
   );
@@ -59,6 +62,7 @@
     );
     if (!ok) return;
     app.data.days = obj.days;
+    app.data.submittedDays = obj.submittedDays || {};
     if (obj.name && !app.data.name) app.data.name = obj.name;
     app.data.timer = { activeId: null, startedAt: null, date: null }; // never import a running timer
     save();
