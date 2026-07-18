@@ -26,6 +26,12 @@ jobs:
       contents: write
     env:
       NDK_VERSION: "26.1.10909125"
+      # Google Drive OAuth client secret, compiled in via option_env! in
+      # gdrive.rs — kept out of source. This build uses a raw shell step
+      # (not tauri-action like the other 3 OSes), so it needed its OWN
+      # env wiring; that's why it silently compiled with an empty secret
+      # ("client_secret is missing") even after the other OSes were fixed.
+      GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
 
