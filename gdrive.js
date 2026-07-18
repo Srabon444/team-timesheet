@@ -129,11 +129,13 @@ async function gdDownload(token, id) {
 //   neither             -> already in sync
 // Auto-pull/-push never lose data silently; only a true conflict prompts.
 
-// Stable signature of the days map (order-independent over dates).
-function gdSig(days) {
-  const keys = Object.keys(days || {}).sort();
-  const norm = keys.map((k) => [k, days[k]]);
-  const s = JSON.stringify(norm);
+// Stable signature of the days map + submittedDays (order-independent over
+// dates), so a submitted-mark-only change is detected as a local change too
+// (previously only `days` was hashed, so marking a day submitted without
+// touching entries never triggered a push and silently didn't sync).
+function gdSig(days, submittedDays) {
+  const norm = (m) => Object.keys(m || {}).sort().map((k) => [k, m[k]]);
+  const s = JSON.stringify([norm(days), norm(submittedDays)]);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return String(h >>> 0);
@@ -175,7 +177,7 @@ async function gdSync(interactive) {
   const folderId = await gdEnsureFolder(token);
   const latest = await gdFindLatest(token, folderId);
   const localObj = JSON.parse(buildExportText());
-  const localSig = gdSig(localObj.days);
+  const localSig = gdSig(localObj.days, localObj.submittedDays);
   const syncedAt = S.gdSyncedAt || 0;
   const syncedSig = S.gdSyncedSig || "";
   const localChanged = localSig !== syncedSig;
@@ -198,13 +200,13 @@ async function gdSync(interactive) {
 
   const pull = async () => {
     await applyBackupData(driveObj);
-    await gdMarkSynced(driveAt, gdSig(driveObj.days));
+    await gdMarkSynced(driveAt, gdSig(driveObj.days, driveObj.submittedDays));
     return "Synced (pulled from Drive).";
   };
   const push = async () => {
     const fresh = JSON.parse(buildExportText());
     await gdWriteLatest(token, folderId, latest.id, JSON.stringify(fresh, null, 2));
-    await gdMarkSynced(fresh.exportedAt, gdSig(fresh.days));
+    await gdMarkSynced(fresh.exportedAt, gdSig(fresh.days, fresh.submittedDays));
     return "Synced (pushed to Drive).";
   };
 

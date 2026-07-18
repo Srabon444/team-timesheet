@@ -575,7 +575,10 @@ function buildDaysMap() {
 }
 function buildExportText() {
   return JSON.stringify(
-    { app: "team-timesheet", v: 1, exportedAt: Date.now(), name: S.name || "", days: buildDaysMap() },
+    {
+      app: "team-timesheet", v: 1, exportedAt: Date.now(), name: S.name || "",
+      days: buildDaysMap(), submittedDays: S.submittedDays || {},
+    },
     null, 2
   );
 }
@@ -598,13 +601,16 @@ async function applyBackupData(obj) {
   S.timer = { activeId: null, startedAt: null }; // never import a running timer
   S.date = today;
   if (obj.name && !S.name) S.name = obj.name;
+  S.submittedDays = obj.submittedDays || {};
   await chrome.storage.local.set({
     history: S.history, entries: S.entries, timer: S.timer, date: today, name: S.name,
+    submittedDays: S.submittedDays,
   });
   refreshDataViews();
 }
 function refreshDataViews() {
   if (typeof render === "function") render();
+  if (typeof updateSubmittedUI === "function") updateSubmittedUI();
   if (typeof renderSettings === "function") renderSettings();
   if (typeof renderDashboard === "function") renderDashboard();
 }
