@@ -134,7 +134,12 @@ async function init() {
   // A true conflict returns "sync-conflict"; re-run interactively to prompt
   // (token is already cached, so no OAuth popup just to ask).
   if (typeof gdSync === "function") {
-    gdSync(false).then((r) => { if (r === "sync-conflict") gdSync(true); }).catch(() => {});
+    const trySync = () => gdSync(false).then((r) => { if (r === "sync-conflict") gdSync(true); }).catch(() => {});
+    trySync();
+    // Poll while this view stays open (mainly the full tab, which can sit open
+    // for a while) so a change made on another device/app shows up here without
+    // needing a local edit to trigger the debounced push-based sync.
+    setInterval(trySync, 20000);
   }
 }
 
@@ -236,7 +241,12 @@ function updateSubmittedUI() {
   state.textContent = done ? "✅ Submitted" : "⬜ Not submitted";
   state.className = "submitState" + (done ? " done" : "");
   const btn = $("markSubmitBtn");
-  if (btn) btn.textContent = done ? "Unmark" : "Mark submitted";
+  if (btn) {
+    btn.textContent = done ? "Unmark" : "Mark submitted";
+    // Nothing to mark submitted if there's no entries for this day —
+    // unmarking stays available so a wrong mark can always be undone.
+    btn.disabled = !done && currentEntries().length === 0;
+  }
 }
 // Injected into the form tab after a fill: watches for the "Thank you"
 // completion screen and records a REAL submission (method "auto") straight
@@ -406,6 +416,10 @@ function setupSearchSelect(input, listEl, getOptions) {
   });
 }
 
+function viewTotalSec() {
+  return currentEntries().reduce((sum, e) => sum + elapsedSec(e), 0);
+}
+
 // ---------- render entries ----------
 function render() {
   const box = $("entries");
@@ -413,6 +427,9 @@ function render() {
   const list = currentEntries();
   const todayView = isTodayView();
   $("emptyMsg").classList.toggle("hidden", list.length > 0);
+  const totalEl = $("dayTotal");
+  if (totalEl) totalEl.textContent = secToHHMM(viewTotalSec());
+  updateSubmittedUI();
   for (const e of list) {
     const active = todayView && S.timer.activeId === e.id;
     const div = document.createElement("div");
@@ -477,6 +494,10 @@ function startTick() {
     if (live) live.textContent = secToHHMMSS(sec);   // ticks every second -> clearly running
     const inp = document.querySelector(".entry.active .time");
     if (inp && document.activeElement !== inp) inp.value = secToHHMM(sec);
+    if (isTodayView()) {
+      const totalEl = $("dayTotal");
+      if (totalEl) totalEl.textContent = secToHHMM(viewTotalSec());
+    }
   }, 1000);
 }
 

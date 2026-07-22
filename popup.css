@@ -59,6 +59,11 @@ select {
 .link { background: none; border: none; color: var(--accent-light); cursor: pointer; font-size: 12px; padding: 0; }
 .link:disabled { opacity: .4; cursor: default; }
 
+.dayHeadRow { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 6px; }
+.dayHeadRow h2 { margin: 0; }
+.dayTotalVal { font-size: 12px; color: var(--accent-light); }
+.mono { font-variant-numeric: tabular-nums; }
+
 /* Day navigator for browsing / back-filling past days (Task 4b) */
 .dayNav { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; }
 .dayNav .link { font-size: 16px; }
