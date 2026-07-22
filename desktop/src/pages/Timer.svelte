@@ -227,7 +227,7 @@
       {:else}
         <span class="s-icon">⬜</span>
         <span class="s-text">Not submitted yet</span>
-        <button class="btn tiny" onclick={() => markDaySubmitted(selected, "manual")}>Mark submitted</button>
+        <button class="btn tiny" disabled={entries.length === 0} onclick={() => markDaySubmitted(selected, "manual")}>Mark submitted</button>
       {/if}
     </div>
 
@@ -365,6 +365,15 @@
   .today-tag {
     position: absolute; left: 50%; transform: translateX(-50%); bottom: -18px;
     font-size: 11px; color: var(--success);
+  }
+
+  /* Mobile/narrow (Android): 7 equal flex columns squeeze down to ~30px each,
+     which is too narrow for "Mon" + the ✅ badge to coexist — they overlap.
+     Give cards a fixed, readable width and let the strip scroll horizontally
+     instead; this also means fewer days show at once, which is the point. */
+  @media (max-width: 640px) {
+    .strip { overflow-x: auto; padding-bottom: 8px; }
+    .daycard { flex: 0 0 72px; }
   }
 
   .toolbar { display: flex; align-items: center; justify-content: space-between; margin: 26px 0 12px; }
