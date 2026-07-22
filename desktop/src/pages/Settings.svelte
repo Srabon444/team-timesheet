@@ -90,25 +90,25 @@
   }
   async function gdDoSync() {
     gdBusy = true; gdMsg = "Syncing…";
-    try { gdMsg = await gdSync(true) || "Done."; } catch (e) { gdMsg = e.message || String(e); }
+    try { gdMsg = await gdSync(true) || "Done."; } catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
   }
   async function gdDoBackup() {
     gdBusy = true; gdMsg = "Backing up…";
-    try { await gdBackupNow(); gdMsg = "Backed up to Google Drive ✓"; } catch (e) { gdMsg = e.message || String(e); }
+    try { await gdBackupNow(); gdMsg = "Backed up to Google Drive ✓"; } catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
   }
   async function gdDoRestore() {
     gdBusy = true; gdMsg = "Loading backups…";
     try { gdFiles = await gdListBackups(); gdMsg = gdFiles.length ? `${gdFiles.length} backup(s) — pick one to restore.` : "No backups found in Drive."; }
-    catch (e) { gdMsg = e.message || String(e); }
+    catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
   }
   async function gdPick(f) {
     if (!(await showConfirm(`Restore "${f.name}"? Current data is overwritten.`, "Yes, restore"))) return;
     gdBusy = true; gdMsg = `Restoring ${f.name}…`;
     try { await gdRestoreFile(f.id); gdFiles = null; gdMsg = `Restored from ${f.name} ✓`; }
-    catch (e) { gdMsg = e.message || String(e); }
+    catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
   }
 

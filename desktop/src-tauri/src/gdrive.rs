@@ -172,12 +172,20 @@ async fn access_token(app: &AppHandle) -> Result<String, String> {
         .send()
         .await
         .map_err(|e| e.to_string())?;
+    let status = res.status();
     let text = res.text().await.map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    v.get("access_token")
-        .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| format!("token refresh failed: {}", text))
+    if let Some(tok) = v.get("access_token").and_then(|x| x.as_str()) {
+        return Ok(tok.to_string());
+    }
+    // invalid_grant means the refresh token itself was revoked/expired — a
+    // permanent condition, not a transient network hiccup. Clear the stored
+    // credential so gdrive_connected() flips false and the UI offers
+    // "Connect Google Drive" again instead of silently failing forever.
+    if status.as_u16() == 400 && v.get("error").and_then(|x| x.as_str()) == Some("invalid_grant") {
+        let _ = std::fs::remove_file(token_path(app)?);
+    }
+    Err(format!("token refresh failed: {}", text))
 }
 
 // Authenticated Drive REST call. The frontend builds the URL/body/verb; this
