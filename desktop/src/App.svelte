@@ -15,7 +15,12 @@
 
   // Cross-device sync: pull/push with Google Drive on open (silent — skips if
   // not connected); a real conflict re-runs interactively to prompt.
-  gdSync(false).then((r) => { if (r === "sync-conflict") gdSync(true); }).catch(() => {});
+  const trySync = () => gdSync(false).then((r) => { if (r === "sync-conflict") gdSync(true); }).catch(() => {});
+  trySync();
+  // Also poll while the app stays open, so a change made on another
+  // device/app shows up here without needing a local edit on this one to
+  // trigger the debounced push-based sync below.
+  setInterval(trySync, 20000);
 
   // Push local edits shortly after any change to the days map. The signature
   // check in gdSync makes a pull's own write a no-op, so there's no loop.
