@@ -985,6 +985,31 @@ async function harness6() {
   A(totals.length === 7 && totals[0].total === 3600 && totals[4].total === 900 && totals[5].total === 0, "weekTotals maps each day of the week to its total, 0 for days outside the fixture");
 }
 
+// ============================================================
+// HARNESS 7 — Drive sync wipe-guard (pure functions from gdrive.js)
+// ============================================================
+async function harness7() {
+  console.log("\n== Harness 7: Drive sync wipe-guard ==");
+  const gdSrc = fs.readFileSync(path.join(ROOT, "gdrive.js"), "utf8");
+  const ctx = {};
+  const vm = require("vm");
+  vm.createContext(ctx);
+  vm.runInContext(gdSrc, ctx);
+
+  A(ctx.gdTotalEntries({ "2026-07-01": [{}, {}], "2026-07-02": [{}] }) === 3, "gdTotalEntries sums entries across all days");
+  A(ctx.gdTotalEntries({}) === 0, "gdTotalEntries of no days is 0");
+  A(ctx.gdTotalEntries({ "2026-07-01": [] }) === 0, "gdTotalEntries of an empty day is 0");
+
+  // The actual incident: local went empty (Reset/bad Restore) and would push
+  // over a Drive copy that still has data — must be guarded.
+  A(ctx.gdShouldGuardWipe(true, 0, 340) === true, "pushing empty local over a non-empty Drive is guarded");
+  A(ctx.gdShouldGuardWipe(false, 340, 0) === true, "pulling empty Drive over a non-empty local is guarded");
+  // Ordinary edits (including ones that delete entries) must never be blocked.
+  A(ctx.gdShouldGuardWipe(true, 12, 340) === false, "pushing fewer (but non-zero) entries is NOT guarded");
+  A(ctx.gdShouldGuardWipe(true, 0, 0) === false, "both sides already empty is NOT guarded");
+  A(ctx.gdShouldGuardWipe(false, 0, 0) === false, "both sides empty on the pull direction is NOT guarded either");
+}
+
 (async () => {
   await harness1();
   await harness2();
@@ -992,6 +1017,7 @@ async function harness6() {
   await harness4();
   await harness5();
   await harness6();
+  await harness7();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();

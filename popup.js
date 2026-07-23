@@ -134,14 +134,7 @@ async function init() {
   // Cross-device sync: silently sync with Google Drive on open (if connected).
   // A real conflict (both sides changed) resolves automatically to whichever
   // side was edited more recently — see gdSync.
-  if (typeof gdSync === "function") {
-    const trySync = () => gdSync(false).catch(() => {});
-    trySync();
-    // Poll while this view stays open (mainly the full tab, which can sit open
-    // for a while) so a change made on another device/app shows up here without
-    // needing a local edit to trigger the debounced push-based sync.
-    setInterval(trySync, 20000);
-  }
+  if (typeof gdSync === "function") gdSync(false).catch(() => {});
 }
 
 // ---------- timer engine (one active at a time) ----------

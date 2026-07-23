@@ -125,9 +125,11 @@ async function gdDownload(token, id) {
 // against the last-synced signature, and the Drive file's version (its
 // envelope's exportedAt) against the last-synced version:
 //   drive changed only  -> pull        local changed only -> push
-//   both changed        -> ask which to keep (real conflict)
+//   both changed        -> keep whichever was edited more recently
 //   neither             -> already in sync
-// Auto-pull/-push never lose data silently; only a true conflict prompts.
+// Whichever side is about to be REPLACED, if it's non-empty and the
+// incoming side is completely empty, that's a wipe (e.g. Reset Everything,
+// or a bad Restore) — refuse it silently and ask first. See gdSync.
 
 // Stable signature of the days map + submittedDays (order-independent over
 // dates), so a submitted-mark-only change is detected as a local change too
@@ -139,6 +141,16 @@ function gdSig(days, submittedDays) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return String(h >>> 0);
+}
+function gdTotalEntries(daysMap) {
+  return Object.values(daysMap || {}).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0);
+}
+// True when the side about to be adopted (push→Drive, pull→local) is
+// completely empty while the side it would replace has data — the actual
+// data-loss failure mode (Reset Everything, or a bad Restore, silently
+// wiping Drive + every other synced device). Pure/testable on purpose.
+function gdShouldGuardWipe(wantPush, localTotal, driveTotal) {
+  return wantPush ? (localTotal === 0 && driveTotal > 0) : (driveTotal === 0 && localTotal > 0);
 }
 
 async function gdFindLatest(token, folderId) {
@@ -201,13 +213,22 @@ async function gdSync(interactive) {
     return "Synced (pushed to Drive).";
   };
 
-  if (driveChanged && !localChanged) return pull();
-  if (!driveChanged && localChanged) return push();
-  if (driveChanged && localChanged) {
-    // Both sides changed since the last sync — no prompt; keep whichever was
-    // actually edited more recently (this device's last local edit vs the
-    // timestamp Drive's copy was pushed with).
-    return (S.lastEditAt || 0) > driveAt ? push() : pull();
+  if (!driveChanged && !localChanged) return "Already in sync.";
+
+  // Decide direction first; a genuine two-sided conflict is broken by recency.
+  const wantPush = localChanged && (!driveChanged || (S.lastEditAt || 0) > driveAt);
+
+  // Only an exact wipe-to-zero is guarded, not a large-but-partial reduction
+  // — widen gdShouldGuardWipe if partial loss becomes a real incident too.
+  const localTotal = gdTotalEntries(localObj.days);
+  const driveTotal = gdTotalEntries(driveObj.days);
+  if (gdShouldGuardWipe(wantPush, localTotal, driveTotal)) {
+    if (!interactive) return "Skipped auto-sync: one side is empty, the other isn't. Open Settings → Sync now to confirm.";
+    const label = wantPush
+      ? `erase Drive's ${driveTotal} entr${driveTotal === 1 ? "y" : "ies"} (and every other synced device)`
+      : `erase this device's ${localTotal} entr${localTotal === 1 ? "y" : "ies"}`;
+    const ok = await showConfirm(`One side is empty and the other isn't. Really ${label}?`, "Yes, erase");
+    if (!ok) return "Sync cancelled — nothing changed.";
   }
-  return "Already in sync.";
+  return wantPush ? push() : pull();
 }
