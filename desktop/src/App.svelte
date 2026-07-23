@@ -11,21 +11,29 @@
 
   const win = getCurrentWindow();
 
-  load();
-
-  // Cross-device sync: pull/push with Google Drive on open (silent — skips if
-  // not connected). A real conflict (both sides changed) resolves
-  // automatically to whichever side was edited more recently — see gdSync.
-  gdSync(false).catch(() => {});
+  // load() awaits an async Tauri call (disk read) — run the initial sync
+  // only after it actually lands. Firing gdSync(false) right alongside
+  // load() (not awaited) meant it read app.data while it was still the
+  // empty $state(defaults()) placeholder, comparing against the wrong data
+  // on every single app open.
+  load().then(() => gdSync(false).catch(() => {}));
 
   // Push local edits shortly after any change to days/submittedDays, and
   // stamp when that happened (used to pick a winner on a real sync
   // conflict). The signature check in gdSync makes a pull's own write a
   // no-op, so there's no loop.
-  let firstRun = true;
+  //
+  // Skipping "the initial load" needs two guards, not one: load() replaces
+  // `app.data` wholesale once its async read resolves, which re-triggers
+  // this effect a SECOND time after its first (pre-load, still-default)
+  // pass already spent the naive one-shot skip — that second pass is the
+  // data actually landing, not a real edit, so it was getting stamped as
+  // one and making an untouched app look "just edited" on every open.
+  let sawLoad = false;
   $effect(() => {
     JSON.stringify([app.data.days, app.data.submittedDays]); // track deep changes
-    if (firstRun) { firstRun = false; return; } // skip the initial load
+    if (!app.loaded) return; // pre-load pass — app.data is still the placeholder
+    if (!sawLoad) { sawLoad = true; return; } // this run IS the load landing
     app.data.lastEditAt = Date.now();
     gdSyncSoon();
   });
