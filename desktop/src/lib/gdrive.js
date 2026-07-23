@@ -4,7 +4,7 @@
 // from the app origin. This module builds the same backup envelope + sync
 // logic as the extension's gdrive.js and drives it through invoke().
 import { invoke } from "@tauri-apps/api/core";
-import { app, save } from "./store.svelte.js";
+import { app, save, showConfirm } from "./store.svelte.js";
 
 const FOLDER = "Team Timesheet Backups";
 
@@ -47,6 +47,16 @@ function sig(days, submittedDays) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return String(h >>> 0);
+}
+function totalEntries(daysMap) {
+  return Object.values(daysMap || {}).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0);
+}
+// True when the side about to be adopted (push→Drive, pull→local) is
+// completely empty while the side it would replace has data — the actual
+// data-loss failure mode (Reset Everything, or a bad Restore, silently
+// wiping Drive + every other synced device). Pure/testable on purpose.
+export function shouldGuardWipe(wantPush, localTotal, driveTotal) {
+  return wantPush ? (localTotal === 0 && driveTotal > 0) : (driveTotal === 0 && localTotal > 0);
 }
 
 async function ensureFolder() {
@@ -139,15 +149,24 @@ export async function gdSync(interactive) {
   const pull = async () => { applyEnvelope(driveObj); markSynced(driveAt, sig(driveObj.days, driveObj.submittedDays)); return "Synced (pulled from Drive)."; };
   const push = async () => { const fresh = buildEnvelope(); await writeLatest(folderId, latest.id, JSON.stringify(fresh, null, 2)); markSynced(fresh.exportedAt, sig(fresh.days, fresh.submittedDays)); return "Synced (pushed to Drive)."; };
 
-  if (driveChanged && !localChanged) return pull();
-  if (!driveChanged && localChanged) return push();
-  if (driveChanged && localChanged) {
-    // Both sides changed since the last sync — no prompt; keep whichever was
-    // actually edited more recently (this device's last local edit vs the
-    // timestamp Drive's copy was pushed with).
-    return (app.data.lastEditAt || 0) > driveAt ? push() : pull();
+  if (!driveChanged && !localChanged) return "Already in sync.";
+
+  // Decide direction first; a genuine two-sided conflict is broken by recency.
+  const wantPush = localChanged && (!driveChanged || (app.data.lastEditAt || 0) > driveAt);
+
+  // Only an exact wipe-to-zero is guarded, not a large-but-partial reduction
+  // — widen shouldGuardWipe if partial loss becomes a real incident too.
+  const localTotal = totalEntries(localObj.days);
+  const driveTotal = totalEntries(driveObj.days);
+  if (shouldGuardWipe(wantPush, localTotal, driveTotal)) {
+    if (!interactive) return "Skipped auto-sync: one side is empty, the other isn't. Open Settings → Sync now to confirm.";
+    const label = wantPush
+      ? `erase Drive's ${driveTotal} entr${driveTotal === 1 ? "y" : "ies"} (and every other synced device)`
+      : `erase this device's ${localTotal} entr${localTotal === 1 ? "y" : "ies"}`;
+    const ok = await showConfirm(`One side is empty and the other isn't. Really ${label}?`, "Yes, erase");
+    if (!ok) return "Sync cancelled — nothing changed.";
   }
-  return "Already in sync.";
+  return wantPush ? push() : pull();
 }
 
 // Debounced push after local edits.
