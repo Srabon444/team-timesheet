@@ -20,6 +20,7 @@ function defaults() {
   return {
     days: {},
     submittedDays: {}, // { date: { at: ts, method: "auto"|"manual" } } — show-only
+    deletedEntries: {}, // { entryId: deletedAtMs } — tombstones so sync merge doesn't resurrect a deleted entry
     timer: { activeId: null, startedAt: null, date: null },
     name: "",
     names: [],
@@ -29,7 +30,6 @@ function defaults() {
     warnedDate: null,
     confirmBeforeDelete: true,
     theme: "dark",
-    lastEditAt: 0, // ms timestamp of the last local days/submittedDays change — Drive sync conflict resolution
   };
 }
 
@@ -110,6 +110,10 @@ export function updateEntry(date, id, fields) {
 }
 export function removeEntry(date, id) {
   timer.deleteEntry(app.data, date, id);
+  // Tombstone it — otherwise a sync merge would resurrect this entry from
+  // another device that's still holding an older, pre-delete copy.
+  app.data.deletedEntries = app.data.deletedEntries || {};
+  app.data.deletedEntries[id] = Date.now();
   save();
 }
 export function entryElapsed(entry) {
