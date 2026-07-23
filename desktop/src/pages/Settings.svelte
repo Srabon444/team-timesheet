@@ -203,8 +203,9 @@
 <section>
   <h2>Google Drive sync &amp; backup</h2>
   <p class="muted small">Sign in to sync this data across your devices (desktop, mobile, extension) on the
-    same Google account — auto-syncs on open and after edits, and asks which to keep if two devices
-    changed. Backups live in a "Team Timesheet Backups" folder in your own Drive.</p>
+    same Google account — auto-syncs on open, after edits, and every 20s while open. If both sides
+    changed, the more recently edited one wins automatically. Backups live in a "Team Timesheet
+    Backups" folder in your own Drive.</p>
 
   <div class="gdbtns">
     {#if !gdIsConnected}
