@@ -18,23 +18,20 @@
   // on every single app open.
   load().then(() => gdSync(false).catch(() => {}));
 
-  // Push local edits shortly after any change to days/submittedDays, and
-  // stamp when that happened (used to pick a winner on a real sync
-  // conflict). The signature check in gdSync makes a pull's own write a
-  // no-op, so there's no loop.
+  // Push local edits shortly after any change to days/submittedDays/
+  // deletedEntries. gdSync merges rather than blindly overwriting, so the
+  // debounced push is a no-op once both sides already agree.
   //
   // Skipping "the initial load" needs two guards, not one: load() replaces
   // `app.data` wholesale once its async read resolves, which re-triggers
   // this effect a SECOND time after its first (pre-load, still-default)
   // pass already spent the naive one-shot skip — that second pass is the
-  // data actually landing, not a real edit, so it was getting stamped as
-  // one and making an untouched app look "just edited" on every open.
+  // data actually landing, not a real edit, and shouldn't trigger a sync.
   let sawLoad = false;
   $effect(() => {
-    JSON.stringify([app.data.days, app.data.submittedDays]); // track deep changes
+    JSON.stringify([app.data.days, app.data.submittedDays, app.data.deletedEntries]); // track deep changes
     if (!app.loaded) return; // pre-load pass — app.data is still the placeholder
     if (!sawLoad) { sawLoad = true; return; } // this run IS the load landing
-    app.data.lastEditAt = Date.now();
     gdSyncSoon();
   });
 
