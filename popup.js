@@ -105,7 +105,7 @@ async function init() {
   S.timer = S.timer || { activeId: null, startedAt: null };
   S.history = S.history || {};
   S.submittedDays = S.submittedDays || {}; // { date: { at, method } } — Task 7
-  S.lastEditAt = S.lastEditAt || 0; // ms timestamp of the last local data change — Drive sync conflict resolution
+  S.deletedEntries = S.deletedEntries || {}; // { entryId: deletedAtMs } — tombstones so sync merge doesn't resurrect a deleted entry
   S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
   const dailyLimitWasUnset = S.dailyLimitHours === undefined;
   S.dailyLimitHours = S.dailyLimitHours || 8;
@@ -462,6 +462,11 @@ async function deleteEntry(id) {
   const list = currentEntries();
   const idx = list.findIndex((x) => x.id === id);
   if (idx >= 0) list.splice(idx, 1);
+  // Tombstone it — otherwise a sync merge would resurrect this entry from
+  // another device that's still holding an older, pre-delete copy.
+  S.deletedEntries = S.deletedEntries || {};
+  S.deletedEntries[id] = Date.now();
+  await chrome.storage.local.set({ deletedEntries: S.deletedEntries });
   await persistCurrent();
   render();
 }
@@ -582,6 +587,7 @@ function buildExportText() {
     {
       app: "team-timesheet", v: 1, exportedAt: Date.now(), name: S.name || "",
       days: buildDaysMap(), submittedDays: S.submittedDays || {},
+      deletedEntries: S.deletedEntries || {},
     },
     null, 2
   );
@@ -606,9 +612,10 @@ async function applyBackupData(obj) {
   S.date = today;
   if (obj.name && !S.name) S.name = obj.name;
   S.submittedDays = obj.submittedDays || {};
+  S.deletedEntries = obj.deletedEntries || {};
   await chrome.storage.local.set({
     history: S.history, entries: S.entries, timer: S.timer, date: today, name: S.name,
-    submittedDays: S.submittedDays,
+    submittedDays: S.submittedDays, deletedEntries: S.deletedEntries,
   });
   refreshDataViews();
 }
@@ -1015,14 +1022,9 @@ document.addEventListener("DOMContentLoaded", () => {
         updateSubmittedUI();
       }
       // Push local edits to Drive shortly after any data change. A pull writes
-      // the same keys, but gdSync's signature check makes the follow-up a
-      // no-op, so there's no pull↔push loop. lastEditAt gets bumped even for
-      // a pull-caused write — harmless, since a pull also re-syncs the
-      // signature, so this timestamp is only ever consulted after a genuine
-      // later edit re-bumps it for real.
-      if (changes.entries || changes.history || changes.date || changes.name || changes.submittedDays) {
-        S.lastEditAt = Date.now();
-        chrome.storage.local.set({ lastEditAt: S.lastEditAt });
+      // the same keys, but gdSync merges rather than blindly overwriting, so
+      // the follow-up push is a no-op once both sides already agree.
+      if (changes.entries || changes.history || changes.date || changes.name || changes.submittedDays || changes.deletedEntries) {
         gdSyncSoon();
       }
     });

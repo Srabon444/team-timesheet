@@ -188,11 +188,10 @@
         <div class="settingsRow" style="display:block">
           <div class="label">Google Drive sync &amp; backup</div>
           <div class="desc">Sign in to sync this data across your devices (extension, desktop, mobile)
-            on the same Google account — auto-syncs on open and after edits. If both sides changed, the
-            more recently edited one wins automatically; if one side is completely empty and the other
-            isn't, sync stops and asks first. Backups (a rolling <code>latest</code> file + dated
-            snapshots) live in a "Team Timesheet Backups" folder in your own Drive; restore any of them
-            here.</div>
+            on the same Google account — auto-syncs on open and after edits. Tasks added on any device
+            (even while offline) are merged in, never overridden — nothing gets silently erased. Backups
+            (a rolling <code>latest</code> file + dated snapshots) live in a "Team Timesheet Backups"
+            folder in your own Drive; restore any of them here.</div>
           <div class="gdriveBtns">
             <button id="gdConnect" class="btn" style="width:auto">Connect Google Drive</button>
             <button id="gdSyncBtn" class="btn primary" style="width:auto" disabled>Sync now</button>

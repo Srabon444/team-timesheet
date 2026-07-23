@@ -90,19 +90,20 @@ async function gdUpdateFile(token, fileId, content) {
   return res.json();
 }
 
-// Write the rolling latest file (create or overwrite) + a dated snapshot.
-async function gdBackupNow(token, exportText) {
+// Snapshot the CURRENT (post-merge) canonical state as a dated backup file.
+// Runs gdSync first — never snapshots this device's raw local view, which
+// could be missing entries another device added while this one was offline;
+// throws rather than ever writing an empty snapshot.
+async function gdBackupNow() {
+  await gdSync(true);
+  const token = await gdToken(true);
   const folderId = await gdEnsureFolder(token);
-  const q = encodeURIComponent(`name='timesheet-latest.json' and '${folderId}' in parents and trashed=false`);
-  const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
-  const j = await r.json();
-  if (j.files && j.files.length) await gdUpdateFile(token, j.files[0].id, exportText);
-  else await gdCreateFile(token, folderId, "timesheet-latest.json", exportText);
-
+  const latest = await gdFindLatest(token, folderId);
+  if (!latest) throw new Error("Nothing to back up yet — add an entry first.");
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-  await gdCreateFile(token, folderId, `timesheet-${stamp}.json`, exportText);
+  await gdCreateFile(token, folderId, `timesheet-${stamp}.json`, latest.content);
 }
 
 async function gdListBackups(token) {
@@ -120,37 +121,47 @@ async function gdDownload(token, id) {
 }
 
 // ---- Cross-device sync ------------------------------------------------------
-// The rolling timesheet-latest.json IS the sync anchor. Each device compares a
-// content SIGNATURE of its own data (so no per-mutation bookkeeping is needed)
-// against the last-synced signature, and the Drive file's version (its
-// envelope's exportedAt) against the last-synced version:
-//   drive changed only  -> pull        local changed only -> push
-//   both changed        -> keep whichever was edited more recently
-//   neither             -> already in sync
-// Whichever side is about to be REPLACED, if it's non-empty and the
-// incoming side is completely empty, that's a wipe (e.g. Reset Everything,
-// or a bad Restore) — refuse it silently and ask first. See gdSync.
+// The rolling timesheet-latest.json is the sync anchor. Unlike the earlier
+// "whichever side changed last wins, whole state replaced" design, this
+// MERGES: every entry (by its stable id) that exists on either side survives,
+// so two devices that each added tasks while offline both keep their tasks
+// when they reconnect — neither side's edits get silently discarded. An
+// entry only disappears when it's explicitly deleted (tombstoned in
+// `deletedEntries`, unioned across devices so a delete on one device still
+// takes effect everywhere once merged in). Because merging can only ever
+// UNION data in, the merged result can never be smaller than either side
+// UNLESS something was actually, deliberately deleted — an empty side can
+// never silently erase a non-empty one, structurally, not just by a guard.
 
-// Stable signature of the days map + submittedDays (order-independent over
-// dates), so a submitted-mark-only change is detected as a local change too
-// (previously only `days` was hashed, so marking a day submitted without
-// touching entries never triggered a push and silently didn't sync).
-function gdSig(days, submittedDays) {
+function gdTotalEntries(daysMap) {
+  return Object.values(daysMap || {}).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0);
+}
+// Signature of the full syncable state (order-independent over dates/ids),
+// so any real difference — including a tombstone-only or submitted-only
+// change — is detected without per-mutation bookkeeping.
+function gdSig(days, submittedDays, deletedEntries) {
   const norm = (m) => Object.keys(m || {}).sort().map((k) => [k, m[k]]);
-  const s = JSON.stringify([norm(days), norm(submittedDays)]);
+  const s = JSON.stringify([norm(days), norm(submittedDays), norm(deletedEntries)]);
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return String(h >>> 0);
 }
-function gdTotalEntries(daysMap) {
-  return Object.values(daysMap || {}).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0);
-}
-// True when the side about to be adopted (push→Drive, pull→local) is
-// completely empty while the side it would replace has data — the actual
-// data-loss failure mode (Reset Everything, or a bad Restore, silently
-// wiping Drive + every other synced device). Pure/testable on purpose.
-function gdShouldGuardWipe(wantPush, localTotal, driveTotal) {
-  return wantPush ? (localTotal === 0 && driveTotal > 0) : (driveTotal === 0 && localTotal > 0);
+// Union-merge two days maps by entry id, then drop anything tombstoned by
+// either side. On an exact id collision (same entry touched on both sides
+// while offline) local wins — a plain, deterministic tie-break; there's no
+// per-entry modified-time to do better than that today. Pure/testable.
+function gdMergeDays(localDays, localDeleted, driveDays, driveDeleted) {
+  const deleted = { ...(driveDeleted || {}), ...(localDeleted || {}) };
+  const dates = new Set([...Object.keys(localDays || {}), ...Object.keys(driveDays || {})]);
+  const days = {};
+  for (const date of dates) {
+    const byId = new Map();
+    for (const e of (driveDays || {})[date] || []) byId.set(e.id, e);
+    for (const e of (localDays || {})[date] || []) byId.set(e.id, e);
+    const list = [...byId.values()].filter((e) => !(e.id in deleted));
+    if (list.length) days[date] = list;
+  }
+  return { days, deleted };
 }
 
 async function gdFindLatest(token, folderId) {
@@ -165,11 +176,6 @@ async function gdWriteLatest(token, folderId, id, text) {
   if (id) return gdUpdateFile(token, id, text);
   return gdCreateFile(token, folderId, "timesheet-latest.json", text);
 }
-async function gdMarkSynced(at, sig) {
-  S.gdSyncedAt = at;
-  S.gdSyncedSig = sig;
-  await chrome.storage.local.set({ gdSyncedAt: at, gdSyncedSig: sig });
-}
 // interactive=false → silent (skip if not connected). Returns a short status
 // string describing what happened, or "" if nothing/not connected.
 async function gdSync(interactive) {
@@ -180,55 +186,44 @@ async function gdSync(interactive) {
   const folderId = await gdEnsureFolder(token);
   const latest = await gdFindLatest(token, folderId);
   const localObj = JSON.parse(buildExportText());
-  const localSig = gdSig(localObj.days, localObj.submittedDays);
-  const syncedAt = S.gdSyncedAt || 0;
-  const syncedSig = S.gdSyncedSig || "";
-  const localChanged = localSig !== syncedSig;
+  const localDeleted = localObj.deletedEntries || {};
 
-  if (!latest) {
-    await gdWriteLatest(token, folderId, null, JSON.stringify(localObj, null, 2));
-    await gdMarkSynced(localObj.exportedAt, localSig);
-    return "Synced (pushed to Drive).";
+  let driveObj = null;
+  if (latest) { try { driveObj = JSON.parse(latest.content); } catch (e) { driveObj = null; } }
+  const driveDays = (driveObj && typeof driveObj.days === "object") ? driveObj.days : {};
+  const driveSubmitted = (driveObj && driveObj.submittedDays) || {};
+  const driveDeleted = (driveObj && driveObj.deletedEntries) || {};
+
+  const { days: mergedDays, deleted: mergedDeleted } = gdMergeDays(localObj.days, localDeleted, driveDays, driveDeleted);
+  const mergedSubmitted = { ...driveSubmitted, ...(localObj.submittedDays || {}) };
+
+  // Never write an empty backup, in either direction. Structurally the merge
+  // above can't produce an empty result unless both sides genuinely have
+  // nothing (or everything present was explicitly deleted) — this is the
+  // last line of defense, not the main mechanism.
+  if (gdTotalEntries(mergedDays) === 0) {
+    return latest ? "Already in sync." : "Nothing to back up yet — add an entry first.";
   }
 
-  let driveObj;
-  try { driveObj = JSON.parse(latest.content); } catch (e) { driveObj = null; }
-  if (!driveObj || typeof driveObj.days !== "object") {
-    await gdWriteLatest(token, folderId, latest.id, JSON.stringify(localObj, null, 2));
-    await gdMarkSynced(localObj.exportedAt, localSig);
-    return "Synced (pushed to Drive).";
+  const localSig = gdSig(localObj.days, localObj.submittedDays, localDeleted);
+  const driveSig = gdSig(driveDays, driveSubmitted, driveDeleted);
+  const mergedSig = gdSig(mergedDays, mergedSubmitted, mergedDeleted);
+
+  let pulled = false, pushed = false;
+  if (mergedSig !== localSig) {
+    await applyBackupData({ days: mergedDays, submittedDays: mergedSubmitted, deletedEntries: mergedDeleted, name: localObj.name });
+    pulled = true;
   }
-  const driveAt = driveObj.exportedAt || 0;
-  const driveChanged = driveAt !== syncedAt;
-
-  const pull = async () => {
-    await applyBackupData(driveObj);
-    await gdMarkSynced(driveAt, gdSig(driveObj.days, driveObj.submittedDays));
-    return "Synced (pulled from Drive).";
-  };
-  const push = async () => {
-    const fresh = JSON.parse(buildExportText());
-    await gdWriteLatest(token, folderId, latest.id, JSON.stringify(fresh, null, 2));
-    await gdMarkSynced(fresh.exportedAt, gdSig(fresh.days, fresh.submittedDays));
-    return "Synced (pushed to Drive).";
-  };
-
-  if (!driveChanged && !localChanged) return "Already in sync.";
-
-  // Decide direction first; a genuine two-sided conflict is broken by recency.
-  const wantPush = localChanged && (!driveChanged || (S.lastEditAt || 0) > driveAt);
-
-  // Only an exact wipe-to-zero is guarded, not a large-but-partial reduction
-  // — widen gdShouldGuardWipe if partial loss becomes a real incident too.
-  const localTotal = gdTotalEntries(localObj.days);
-  const driveTotal = gdTotalEntries(driveObj.days);
-  if (gdShouldGuardWipe(wantPush, localTotal, driveTotal)) {
-    if (!interactive) return "Skipped auto-sync: one side is empty, the other isn't. Open Settings → Sync now to confirm.";
-    const label = wantPush
-      ? `erase Drive's ${driveTotal} entr${driveTotal === 1 ? "y" : "ies"} (and every other synced device)`
-      : `erase this device's ${localTotal} entr${localTotal === 1 ? "y" : "ies"}`;
-    const ok = await showConfirm(`One side is empty and the other isn't. Really ${label}?`, "Yes, erase");
-    if (!ok) return "Sync cancelled — nothing changed.";
+  if (mergedSig !== driveSig) {
+    const fresh = JSON.stringify(
+      { ...localObj, days: mergedDays, submittedDays: mergedSubmitted, deletedEntries: mergedDeleted, exportedAt: Date.now() },
+      null, 2
+    );
+    await gdWriteLatest(token, folderId, latest ? latest.id : null, fresh);
+    pushed = true;
   }
-  return wantPush ? push() : pull();
+  if (pulled && pushed) return "Synced (merged this device's and Drive's changes).";
+  if (pulled) return "Synced (pulled from Drive).";
+  if (pushed) return "Synced (pushed to Drive).";
+  return "Already in sync.";
 }

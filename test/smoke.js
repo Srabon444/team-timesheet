@@ -986,10 +986,10 @@ async function harness6() {
 }
 
 // ============================================================
-// HARNESS 7 — Drive sync wipe-guard (pure functions from gdrive.js)
+// HARNESS 7 — Drive sync merge (pure functions from gdrive.js)
 // ============================================================
 async function harness7() {
-  console.log("\n== Harness 7: Drive sync wipe-guard ==");
+  console.log("\n== Harness 7: Drive sync merge ==");
   const gdSrc = fs.readFileSync(path.join(ROOT, "gdrive.js"), "utf8");
   const ctx = {};
   const vm = require("vm");
@@ -1000,14 +1000,39 @@ async function harness7() {
   A(ctx.gdTotalEntries({}) === 0, "gdTotalEntries of no days is 0");
   A(ctx.gdTotalEntries({ "2026-07-01": [] }) === 0, "gdTotalEntries of an empty day is 0");
 
-  // The actual incident: local went empty (Reset/bad Restore) and would push
-  // over a Drive copy that still has data — must be guarded.
-  A(ctx.gdShouldGuardWipe(true, 0, 340) === true, "pushing empty local over a non-empty Drive is guarded");
-  A(ctx.gdShouldGuardWipe(false, 340, 0) === true, "pulling empty Drive over a non-empty local is guarded");
-  // Ordinary edits (including ones that delete entries) must never be blocked.
-  A(ctx.gdShouldGuardWipe(true, 12, 340) === false, "pushing fewer (but non-zero) entries is NOT guarded");
-  A(ctx.gdShouldGuardWipe(true, 0, 0) === false, "both sides already empty is NOT guarded");
-  A(ctx.gdShouldGuardWipe(false, 0, 0) === false, "both sides empty on the pull direction is NOT guarded either");
+  // The actual scenario: phone (offline) added task A, desktop (offline)
+  // added task B on the same day — both must survive the merge, not one
+  // override the other.
+  const phone = { "2026-07-20": [{ id: "A", description: "phone task" }] };
+  const desktop = { "2026-07-20": [{ id: "B", description: "desktop task" }] };
+  let m = ctx.gdMergeDays(phone, {}, desktop, {});
+  A(m.days["2026-07-20"].length === 2, "entries added on two offline devices both survive the merge");
+  A(m.days["2026-07-20"].some((e) => e.id === "A") && m.days["2026-07-20"].some((e) => e.id === "B"),
+    "merge keeps both devices' entries by id, not just one side");
+
+  // A completely empty side must never erase the other's data — this is
+  // the actual incident: Reset (or a bad Restore) emptied one side.
+  m = ctx.gdMergeDays({}, {}, { "2026-07-20": [{ id: "A" }] }, {});
+  A(m.days["2026-07-20"].length === 1, "an empty local side does not erase Drive's entries");
+  m = ctx.gdMergeDays({ "2026-07-20": [{ id: "A" }] }, {}, {}, {});
+  A(m.days["2026-07-20"].length === 1, "an empty Drive side does not erase local entries");
+
+  // Deleting an entry (tombstoned) must actually stick, not get resurrected
+  // by the other side's stale pre-delete copy.
+  m = ctx.gdMergeDays(
+    { "2026-07-20": [] }, { A: Date.now() },              // this device deleted A
+    { "2026-07-20": [{ id: "A" }] }, {}                     // Drive still has the old copy
+  );
+  A(!m.days["2026-07-20"], "a tombstoned entry is not resurrected from the other side's stale copy");
+  A("A" in m.deleted, "merge carries the tombstone forward");
+
+  // Same id edited on both sides while offline needs a deterministic pick —
+  // local wins (documented tie-break, not a "correct" resolution).
+  m = ctx.gdMergeDays(
+    { "2026-07-20": [{ id: "A", description: "local edit" }] }, {},
+    { "2026-07-20": [{ id: "A", description: "drive edit" }] }, {}
+  );
+  A(m.days["2026-07-20"][0].description === "local edit", "same-id collision deterministically prefers local");
 }
 
 (async () => {

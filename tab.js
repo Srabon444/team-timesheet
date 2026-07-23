@@ -266,11 +266,11 @@ async function gdDoSync() {
 async function gdDoBackup() {
   gdSetStatus("Backing up…");
   try {
-    const token = await gdToken(true);
-    await gdBackupNow(token, buildExportText());
+    await gdBackupNow();
     S.gdLastBackup = todayStr();
     await chrome.storage.local.set({ gdLastBackup: S.gdLastBackup });
     gdSetStatus("Backed up to Google Drive ✓", "ok");
+    await gdRefreshUI();
   } catch (e) { gdSetStatus(e.message || String(e), "err"); }
 }
 async function gdDoRestore() {
@@ -310,16 +310,21 @@ async function gdMaybeAutoBackup() {
   if (typeof S === "undefined" || !S || !S.gdAutoBackup) return;
   if (S.gdLastBackup === todayStr()) return;
   try {
-    const token = await gdToken(false); // silent — no prompt on load
-    await gdBackupNow(token, buildExportText());
+    await gdBackupNow(); // throws (and skips) if there's nothing to back up yet
     S.gdLastBackup = todayStr();
     await chrome.storage.local.set({ gdLastBackup: S.gdLastBackup });
-  } catch (e) { /* not connected or offline — skip quietly */ }
+  } catch (e) { /* not connected, offline, or nothing to back up — skip quietly */ }
 }
 
 async function resetEverything() {
   const msg = "Delete all tasks, history, and settings? This cannot be undone. Your name is kept.";
   if (!(await showConfirm(msg, "Yes, reset"))) return;
+  // Tombstone every entry that existed — otherwise a sync merge would just
+  // pull them all back in from Drive/another device right after.
+  S.deletedEntries = S.deletedEntries || {};
+  const now = Date.now();
+  for (const e of S.entries) S.deletedEntries[e.id] = now;
+  for (const list of Object.values(S.history)) for (const e of list) S.deletedEntries[e.id] = now;
   S.entries = [];
   S.history = {};
   S.timer = { activeId: null, startedAt: null };
@@ -334,6 +339,7 @@ async function resetEverything() {
     entries: [], history: {}, timer: S.timer, draft: null,
     lastProject: null, lastCategory: null,
     dailyLimitHours: 8, confirmBeforeDelete: true, theme: "dark", warnedDate: null,
+    deletedEntries: S.deletedEntries,
   });
   document.documentElement.dataset.theme = resolveTheme("dark");
   renderSettings();
