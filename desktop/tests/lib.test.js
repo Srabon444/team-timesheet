@@ -14,7 +14,7 @@ import * as timer from "../src/lib/timer.js";
 import { parseNames } from "../src/lib/names.js";
 import { categoryColor, projectColor, PROJECTS, CATEGORIES } from "../src/lib/constants.js";
 import { buildFillScript } from "../src/lib/fillout-inject.js";
-import { shouldGuardWipe } from "../src/lib/gdrive.js";
+import { mergeDays } from "../src/lib/gdrive.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -238,18 +238,35 @@ describe("buildFillScript", () => {
   });
 });
 
-describe("Drive sync wipe-guard", () => {
-  it("guards pushing empty local over a non-empty Drive", () => {
-    expect(shouldGuardWipe(true, 0, 340)).toBe(true);
+describe("Drive sync merge", () => {
+  it("keeps entries added on two offline devices — neither overrides the other", () => {
+    const phone = { "2026-07-20": [{ id: "A", description: "phone task" }] };
+    const desktop = { "2026-07-20": [{ id: "B", description: "desktop task" }] };
+    const m = mergeDays(phone, {}, desktop, {});
+    expect(m.days["2026-07-20"]).toHaveLength(2);
+    expect(m.days["2026-07-20"].map((e) => e.id).sort()).toEqual(["A", "B"]);
   });
-  it("guards pulling empty Drive over a non-empty local", () => {
-    expect(shouldGuardWipe(false, 340, 0)).toBe(true);
+  it("an empty local side does not erase Drive's entries", () => {
+    const m = mergeDays({}, {}, { "2026-07-20": [{ id: "A" }] }, {});
+    expect(m.days["2026-07-20"]).toHaveLength(1);
   });
-  it("does not guard pushing fewer (but non-zero) entries", () => {
-    expect(shouldGuardWipe(true, 12, 340)).toBe(false);
+  it("an empty Drive side does not erase local entries", () => {
+    const m = mergeDays({ "2026-07-20": [{ id: "A" }] }, {}, {}, {});
+    expect(m.days["2026-07-20"]).toHaveLength(1);
   });
-  it("does not guard when both sides are already empty", () => {
-    expect(shouldGuardWipe(true, 0, 0)).toBe(false);
-    expect(shouldGuardWipe(false, 0, 0)).toBe(false);
+  it("a tombstoned entry is not resurrected from the other side's stale copy", () => {
+    const m = mergeDays(
+      { "2026-07-20": [] }, { A: Date.now() },
+      { "2026-07-20": [{ id: "A" }] }, {}
+    );
+    expect(m.days["2026-07-20"]).toBeUndefined();
+    expect(m.deleted).toHaveProperty("A");
+  });
+  it("same-id collision (edited on both sides while offline) deterministically prefers local", () => {
+    const m = mergeDays(
+      { "2026-07-20": [{ id: "A", description: "local edit" }] }, {},
+      { "2026-07-20": [{ id: "A", description: "drive edit" }] }, {}
+    );
+    expect(m.days["2026-07-20"][0].description).toBe("local edit");
   });
 });
