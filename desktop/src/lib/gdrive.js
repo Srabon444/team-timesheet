@@ -4,7 +4,7 @@
 // from the app origin. This module builds the same backup envelope + sync
 // logic as the extension's gdrive.js and drives it through invoke().
 import { invoke } from "@tauri-apps/api/core";
-import { app, save, showChoice } from "./store.svelte.js";
+import { app, save } from "./store.svelte.js";
 
 const FOLDER = "Team Timesheet Backups";
 
@@ -116,9 +116,9 @@ function markSynced(at, s) {
   save();
 }
 
-// interactive=false → silent (skip if not connected, no conflict prompt).
-// Returns a status string; "sync-conflict" means the caller should re-run
-// interactively to resolve. See the extension's gdrive.js for the full model.
+// interactive=false → silent (skip if not connected). Returns a status
+// string describing what happened. See the extension's gdrive.js for the
+// full model.
 export async function gdSync(interactive) {
   if (!(await gdConnected())) { if (interactive) throw new Error("Not connected to Google Drive."); return ""; }
   const folderId = await ensureFolder();
@@ -142,14 +142,10 @@ export async function gdSync(interactive) {
   if (driveChanged && !localChanged) return pull();
   if (!driveChanged && localChanged) return push();
   if (driveChanged && localChanged) {
-    if (!interactive) return "sync-conflict";
-    const choice = await showChoice(
-      "This device and Google Drive both changed since the last sync.\n\nWhich copy do you want to keep?",
-      "Keep this device", // yes  → push (overwrite Drive)
-      "Pull from Drive"   // alt  → pull (overwrite this device)
-    );
-    if (choice === "cancel") return "Sync cancelled — nothing changed.";
-    return choice === "yes" ? push() : pull();
+    // Both sides changed since the last sync — no prompt; keep whichever was
+    // actually edited more recently (this device's last local edit vs the
+    // timestamp Drive's copy was pushed with).
+    return (app.data.lastEditAt || 0) > driveAt ? push() : pull();
   }
   return "Already in sync.";
 }

@@ -29,6 +29,7 @@ function defaults() {
     warnedDate: null,
     confirmBeforeDelete: true,
     theme: "dark",
+    lastEditAt: 0, // ms timestamp of the last local days/submittedDays change — Drive sync conflict resolution
   };
 }
 
@@ -137,17 +138,9 @@ export function daySubmitted(date) {
 }
 
 // ---------- confirm modal (promise-based, per-action labels) ----------
-// showConfirm: yes/cancel, resolves boolean. showChoice: adds a middle "alt"
-// button, resolves "yes" | "alt" | "cancel" (e.g. sync conflict: keep this
-// device / pull from Drive / cancel).
 export function showConfirm(message, yesLabel = "Yes") {
   return new Promise((resolve) => {
     app.confirm = { message, yesLabel, resolve: (r) => resolve(r === "yes") };
-  });
-}
-export function showChoice(message, yesLabel, altLabel) {
-  return new Promise((resolve) => {
-    app.confirm = { message, yesLabel, altLabel, resolve };
   });
 }
 export function answerConfirm(result) {
