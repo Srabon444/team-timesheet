@@ -61,6 +61,64 @@ function weekTotals(daysMap, mondayStr) {
 // with the popup and gdrive.js sync). tab.js just uses them as globals.
 
 let weekOffset = 0; // 0 = week containing today, -1 = previous week, etc.
+let tsWeekOffset = 0; // same idea, independent state for the Timesheet panel
+
+// Weekly Timesheet panel: every day of the week as its own card (full entry
+// list, not just a total), click a card to jump to that day in Today.
+function renderTimesheet() {
+  const daysMap = buildDaysMap();
+  const today = todayStr();
+  const monday = addDaysStr(mondayOf(today), tsWeekOffset * 7);
+  const dates = weekDates(monday);
+  const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  document.getElementById("tsWeekLabel").textContent = `${dates[0]} – ${dates[6]}`;
+  const weekTotal = dates.reduce((sum, d) => sum + dayTotal(daysMap[d]), 0);
+  document.getElementById("tsWeekTotal").textContent = `Week: ${secToHHMM(weekTotal)}`;
+
+  const container = document.getElementById("tsDays");
+  container.innerHTML = "";
+  dates.forEach((d, i) => {
+    const entries = daysMap[d] || [];
+    const isToday = d === today;
+    const day = document.createElement("section");
+    day.className = "tsDay" + (isToday ? " istoday" : "");
+    day.innerHTML = `
+      <div class="tsHead">
+        <span><span class="tsDow"></span> <span class="muted tsDate"></span>${isToday ? '<span class="tsToday">Today</span>' : ""}</span>
+        <span class="mono muted tsTotal"></span>
+      </div>
+      <div class="tsRows"></div>`;
+    day.querySelector(".tsDow").textContent = DOW[i];
+    day.querySelector(".tsDate").textContent = d;
+    day.querySelector(".tsTotal").textContent = secToHHMM(dayTotal(entries));
+    const rows = day.querySelector(".tsRows");
+    if (!entries.length) {
+      rows.innerHTML = '<p class="tsNone">No entries.</p>';
+    } else {
+      for (const e of entries) {
+        const row = document.createElement("div");
+        row.className = "tsRow";
+        row.innerHTML = `
+          <span class="dot"></span>
+          <span class="desc"></span>
+          <span class="cat"></span>
+          <span class="proj muted"></span>
+          <span class="mono t"></span>`;
+        row.querySelector(".dot").style.background = projectColor(e.project);
+        row.querySelector(".desc").textContent = e.description;
+        const catEl = row.querySelector(".cat");
+        catEl.textContent = e.category;
+        catEl.style.background = categoryColor(e.category);
+        row.querySelector(".proj").textContent = e.project;
+        row.querySelector(".t").textContent = secToHHMM(e.accSec || 0);
+        rows.appendChild(row);
+      }
+    }
+    day.onclick = () => { setViewDate(d); showPanel("today"); };
+    container.appendChild(day);
+  });
+}
 
 function renderDashboard() {
   const daysMap = buildDaysMap();
@@ -284,20 +342,24 @@ async function resetEverything() {
 }
 
 function showPanel(name) {
-  for (const panel of ["today", "dashboard", "settings"]) {
+  for (const panel of ["today", "timesheet", "dashboard", "settings"]) {
     document.getElementById("panel" + panel[0].toUpperCase() + panel.slice(1)).classList.toggle("hidden", panel !== name);
     document.getElementById("nav" + panel[0].toUpperCase() + panel.slice(1)).classList.toggle("active", panel === name);
   }
+  if (name === "timesheet" && typeof renderTimesheet === "function") renderTimesheet();
   if (name === "dashboard" && typeof renderDashboard === "function") renderDashboard();
   if (name === "settings" && typeof renderSettings === "function") renderSettings();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("navToday").onclick = () => showPanel("today");
+  document.getElementById("navTimesheet").onclick = () => showPanel("timesheet");
   document.getElementById("navDashboard").onclick = () => showPanel("dashboard");
   document.getElementById("navSettings").onclick = () => showPanel("settings");
   document.getElementById("weekPrev").onclick = () => { weekOffset--; renderDashboard(); };
   document.getElementById("weekNext").onclick = () => { weekOffset++; renderDashboard(); };
+  document.getElementById("tsWeekPrev").onclick = () => { tsWeekOffset--; renderTimesheet(); };
+  document.getElementById("tsWeekNext").onclick = () => { tsWeekOffset++; renderTimesheet(); };
 
   document.getElementById("dailyLimitSelect").onchange = (e) => {
     S.dailyLimitHours = Number(e.target.value);

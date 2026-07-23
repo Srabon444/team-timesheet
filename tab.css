@@ -142,6 +142,29 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .gdFile .gdWhen { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 
 .weekNav { display: flex; align-items: center; gap: 14px; margin: 16px 0 10px; font-size: 15px; }
+.tsWeekTotalVal { color: var(--accent-light); margin-left: auto; }
+
+.tsDay {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+.tsDay:hover { background: var(--bg-surface-hover); }
+.tsDay.istoday { border-color: var(--accent); }
+.tsHead { display: flex; justify-content: space-between; align-items: center; }
+.tsDow { font-weight: 700; font-size: 14.5px; }
+.tsToday { color: var(--success); font-size: 12px; margin-left: 8px; }
+.tsNone { margin: 8px 0 0; color: var(--text-muted); font-size: 13px; }
+.tsRow { display: flex; align-items: center; gap: 10px; padding: 8px 0 0; }
+.tsRow .desc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.tsRow .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.tsRow .cat { font-size: 10.5px; font-weight: 600; color: #fff; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.tsRow .proj { font-size: 12.5px; }
+.tsRow .t { font-size: 13px; }
 .weekChart { display: flex; align-items: flex-end; gap: 10px; height: 180px; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
 .weekChart .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 /* dataviz: bar mark spec is "cap it, never fill the slot" (<=24px thick) — the

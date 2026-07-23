@@ -12,6 +12,7 @@
     <nav class="sidebar">
       <div class="brand">Daily Timesheet</div>
       <button class="navBtn active" id="navToday" data-panel="today">Today</button>
+      <button class="navBtn" id="navTimesheet" data-panel="timesheet">Timesheet</button>
       <button class="navBtn" id="navDashboard" data-panel="dashboard">Dashboard</button>
       <button class="navBtn" id="navSettings" data-panel="settings">Settings</button>
     </nav>
@@ -89,6 +90,17 @@
           </section>
 
         </div>
+      </section>
+
+      <section id="panelTimesheet" class="panel hidden">
+        <h1>Timesheet</h1>
+        <div class="weekNav">
+          <button id="tsWeekPrev" class="btn" style="width:auto">&lt;</button>
+          <span id="tsWeekLabel" class="muted"></span>
+          <button id="tsWeekNext" class="btn" style="width:auto">&gt;</button>
+          <span id="tsWeekTotal" class="mono tsWeekTotalVal"></span>
+        </div>
+        <div id="tsDays"></div>
       </section>
 
       <section id="panelDashboard" class="panel hidden">
@@ -176,9 +188,10 @@
         <div class="settingsRow" style="display:block">
           <div class="label">Google Drive sync &amp; backup</div>
           <div class="desc">Sign in to sync this data across your devices (extension, desktop, mobile)
-            on the same Google account — auto-syncs on open and after edits, and asks which to keep if
-            two devices changed. Backups (a rolling <code>latest</code> file + dated snapshots) live in a
-            "Team Timesheet Backups" folder in your own Drive; restore any of them here.</div>
+            on the same Google account — auto-syncs on open, after edits, and every 20s while open.
+            If both sides changed, the more recently edited one wins automatically. Backups (a rolling
+            <code>latest</code> file + dated snapshots) live in a "Team Timesheet Backups" folder in
+            your own Drive; restore any of them here.</div>
           <div class="gdriveBtns">
             <button id="gdConnect" class="btn" style="width:auto">Connect Google Drive</button>
             <button id="gdSyncBtn" class="btn primary" style="width:auto" disabled>Sync now</button>
@@ -206,7 +219,6 @@
       <p id="confirmMsg"></p>
       <div class="confirmActions">
         <button id="confirmNo" class="btn">Cancel</button>
-        <button id="confirmAlt" class="btn primary hidden"></button>
         <button id="confirmYes" class="btn danger">Yes, submit</button>
       </div>
     </div>
