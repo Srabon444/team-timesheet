@@ -105,6 +105,7 @@ async function init() {
   S.timer = S.timer || { activeId: null, startedAt: null };
   S.history = S.history || {};
   S.submittedDays = S.submittedDays || {}; // { date: { at, method } } — Task 7
+  S.lastEditAt = S.lastEditAt || 0; // ms timestamp of the last local data change — Drive sync conflict resolution
   S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
   const dailyLimitWasUnset = S.dailyLimitHours === undefined;
   S.dailyLimitHours = S.dailyLimitHours || 8;
@@ -131,10 +132,10 @@ async function init() {
   document.documentElement.dataset.theme = resolveTheme(S.theme);
   route();
   // Cross-device sync: silently sync with Google Drive on open (if connected).
-  // A true conflict returns "sync-conflict"; re-run interactively to prompt
-  // (token is already cached, so no OAuth popup just to ask).
+  // A real conflict (both sides changed) resolves automatically to whichever
+  // side was edited more recently — see gdSync.
   if (typeof gdSync === "function") {
-    const trySync = () => gdSync(false).then((r) => { if (r === "sync-conflict") gdSync(true); }).catch(() => {});
+    const trySync = () => gdSync(false).catch(() => {});
     trySync();
     // Poll while this view stays open (mainly the full tab, which can sit open
     // for a while) so a change made on another device/app shows up here without
@@ -324,32 +325,21 @@ function clearDraft() {
 // popups (can render cropped/off-screen and Chrome may tear down the popup
 // before a click registers), so use an in-DOM overlay instead.
 function showConfirm(message, yesLabel) {
-  return showDialog(message, yesLabel || "Yes, submit", null).then((r) => r === "yes");
+  return showDialog(message, yesLabel || "Yes, submit").then((r) => r === "yes");
 }
-// Three-way choice: resolves "yes" | "alt" | "cancel" (e.g. sync conflict).
-function showChoice(message, yesLabel, altLabel) {
-  return showDialog(message, yesLabel, altLabel);
-}
-function showDialog(message, yesLabel, altLabel) {
+function showDialog(message, yesLabel) {
   return new Promise((resolve) => {
     $("confirmMsg").textContent = message;
     $("confirmYes").textContent = yesLabel;
-    const alt = $("confirmAlt");
-    if (alt) {
-      if (altLabel) { alt.textContent = altLabel; alt.classList.remove("hidden"); }
-      else alt.classList.add("hidden");
-    }
     $("confirmOverlay").classList.remove("hidden");
     const done = (result) => {
       $("confirmOverlay").classList.add("hidden");
       $("confirmYes").onclick = null;
       $("confirmNo").onclick = null;
-      if (alt) alt.onclick = null;
       resolve(result);
     };
     $("confirmYes").onclick = () => done("yes");
     $("confirmNo").onclick = () => done("cancel");
-    if (alt) alt.onclick = () => done("alt");
   });
 }
 function fillSelect(sel, items) {
@@ -1033,8 +1023,15 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       // Push local edits to Drive shortly after any data change. A pull writes
       // the same keys, but gdSync's signature check makes the follow-up a
-      // no-op, so there's no pull↔push loop.
-      if (changes.entries || changes.history || changes.date || changes.name) gdSyncSoon();
+      // no-op, so there's no pull↔push loop. lastEditAt gets bumped even for
+      // a pull-caused write — harmless, since a pull also re-syncs the
+      // signature, so this timestamp is only ever consulted after a genuine
+      // later edit re-bumps it for real.
+      if (changes.entries || changes.history || changes.date || changes.name || changes.submittedDays) {
+        S.lastEditAt = Date.now();
+        chrome.storage.local.set({ lastEditAt: S.lastEditAt });
+        gdSyncSoon();
+      }
     });
   }
   setupSearchSelect($("projSelect"), $("projList"), () => PROJECTS);

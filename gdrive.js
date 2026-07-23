@@ -158,15 +158,6 @@ async function gdMarkSynced(at, sig) {
   S.gdSyncedSig = sig;
   await chrome.storage.local.set({ gdSyncedAt: at, gdSyncedSig: sig });
 }
-// "yes" = keep this device, "alt" = pull from Drive, "cancel" = do nothing.
-async function gdConflictPrompt() {
-  return showChoice(
-    "This device and Google Drive both changed since the last sync.\n\nWhich copy do you want to keep?",
-    "Keep this device",
-    "Pull from Drive"
-  );
-}
-
 // interactive=false → silent (skip if not connected). Returns a short status
 // string describing what happened, or "" if nothing/not connected.
 async function gdSync(interactive) {
@@ -213,10 +204,10 @@ async function gdSync(interactive) {
   if (driveChanged && !localChanged) return pull();
   if (!driveChanged && localChanged) return push();
   if (driveChanged && localChanged) {
-    if (!interactive) return "sync-conflict"; // don't prompt on silent open; caller re-runs interactively
-    const choice = await gdConflictPrompt();
-    if (choice === "cancel") return "Sync cancelled — nothing changed.";
-    return choice === "yes" ? push() : pull();
+    // Both sides changed since the last sync — no prompt; keep whichever was
+    // actually edited more recently (this device's last local edit vs the
+    // timestamp Drive's copy was pushed with).
+    return (S.lastEditAt || 0) > driveAt ? push() : pull();
   }
   return "Already in sync.";
 }
