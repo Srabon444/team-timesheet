@@ -16,12 +16,7 @@
   // Cross-device sync: pull/push with Google Drive on open (silent — skips if
   // not connected). A real conflict (both sides changed) resolves
   // automatically to whichever side was edited more recently — see gdSync.
-  const trySync = () => gdSync(false).catch(() => {});
-  trySync();
-  // Also poll while the app stays open, so a change made on another
-  // device/app shows up here without needing a local edit on this one to
-  // trigger the debounced push-based sync below.
-  setInterval(trySync, 20000);
+  gdSync(false).catch(() => {});
 
   // Push local edits shortly after any change to days/submittedDays, and
   // stamp when that happened (used to pick a winner on a real sync

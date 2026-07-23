@@ -14,6 +14,7 @@ import * as timer from "../src/lib/timer.js";
 import { parseNames } from "../src/lib/names.js";
 import { categoryColor, projectColor, PROJECTS, CATEGORIES } from "../src/lib/constants.js";
 import { buildFillScript } from "../src/lib/fillout-inject.js";
+import { shouldGuardWipe } from "../src/lib/gdrive.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -234,5 +235,21 @@ describe("buildFillScript", () => {
       'name"quote'
     );
     expect(() => new Function(script)).not.toThrow();
+  });
+});
+
+describe("Drive sync wipe-guard", () => {
+  it("guards pushing empty local over a non-empty Drive", () => {
+    expect(shouldGuardWipe(true, 0, 340)).toBe(true);
+  });
+  it("guards pulling empty Drive over a non-empty local", () => {
+    expect(shouldGuardWipe(false, 340, 0)).toBe(true);
+  });
+  it("does not guard pushing fewer (but non-zero) entries", () => {
+    expect(shouldGuardWipe(true, 12, 340)).toBe(false);
+  });
+  it("does not guard when both sides are already empty", () => {
+    expect(shouldGuardWipe(true, 0, 0)).toBe(false);
+    expect(shouldGuardWipe(false, 0, 0)).toBe(false);
   });
 });
