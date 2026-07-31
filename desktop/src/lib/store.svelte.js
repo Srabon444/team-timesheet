@@ -36,6 +36,7 @@ function defaults() {
 export const app = $state({
   data: defaults(),
   loaded: false,
+  gdriveNeedsReconnect: false, // Drive token revoked/expired mid-session — banner until user reconnects
   now: Date.now(), // ticked every second; reading it makes timer displays live
   fill: { running: false, added: 0, message: "", error: "" },
   confirm: null, // { message, yesLabel, resolve }

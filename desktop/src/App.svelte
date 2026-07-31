@@ -41,6 +41,12 @@
     ["projects", "Projects", "▦"],
     ["reports", "Reports", "▙"],
   ];
+
+  // Dismissing just quiets the nag for this app session — someone whose
+  // token is still dead gets reminded again next launch (gdSync(false) on
+  // load re-fails and re-flags), but doesn't get nagged on every retry
+  // in between. Never shown at all if they've simply never connected.
+  let dismissed = $state(false);
 </script>
 
 <div class="shell">
@@ -52,6 +58,15 @@
       <button class="winbtn close" onclick={() => win.close()} title="Close">✕</button>
     </div>
   </header>
+
+  {#if app.gdriveNeedsReconnect && !dismissed}
+    <div class="gdrive-alert">
+      <button class="gdrive-alert-msg" onclick={() => (nav.page = "settings")}>
+        ⚠ Google Drive session expired — tap to reconnect
+      </button>
+      <button class="gdrive-alert-close" onclick={() => (dismissed = true)} title="Dismiss">✕</button>
+    </div>
+  {/if}
 
   <div class="body">
     <nav class="sidebar">
@@ -110,6 +125,21 @@
   }
   .winbtn:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
   .winbtn.close:hover { background: var(--danger); color: #fff; }
+
+  .gdrive-alert {
+    flex: none; width: 100%; display: flex; align-items: center;
+    background: var(--danger); color: #fff;
+  }
+  .gdrive-alert-msg {
+    flex: 1; border: none; cursor: pointer; background: none; color: inherit;
+    font-size: 13px; font-weight: 600; padding: 8px 14px; text-align: center;
+  }
+  .gdrive-alert-msg:hover { filter: brightness(1.15); }
+  .gdrive-alert-close {
+    flex: none; border: none; cursor: pointer; background: none; color: inherit;
+    font-size: 13px; padding: 8px 14px; opacity: .85;
+  }
+  .gdrive-alert-close:hover { opacity: 1; }
 
   .body { display: flex; flex: 1; min-height: 0; }
   .sidebar {
