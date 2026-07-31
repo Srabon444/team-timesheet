@@ -9,15 +9,35 @@ import { app, save } from "./store.svelte.js";
 const FOLDER = "Team Timesheet Backups";
 
 export function gdConnected() { return invoke("gdrive_connected"); }
-export function gdConnect() { return invoke("gdrive_connect"); }
-export function gdDisconnect() { return invoke("gdrive_disconnect"); }
+export async function gdConnect() {
+  await invoke("gdrive_connect");
+  app.gdriveNeedsReconnect = false;
+}
+export function gdDisconnect() {
+  app.gdriveNeedsReconnect = false;
+  return invoke("gdrive_disconnect");
+}
 
-function api(method, url, body, contentType) {
-  return invoke("gdrive_api", {
-    method, url,
-    body: body === undefined ? null : body,
-    contentType: contentType === undefined ? null : contentType,
-  });
+// Every Drive network call funnels through here, so this is the one place
+// that needs to notice a revoked/expired token — the Rust side already
+// clears the stored refresh token on invalid_grant (see gdrive.rs), but
+// callers up the stack (App.svelte's silent auto-sync included) swallow
+// errors, so without this the user never finds out until they happen to
+// open Settings and notice the button changed back.
+async function api(method, url, body, contentType) {
+  try {
+    return await invoke("gdrive_api", {
+      method, url,
+      body: body === undefined ? null : body,
+      contentType: contentType === undefined ? null : contentType,
+    });
+  } catch (e) {
+    if (!(await gdConnected())) {
+      app.gdriveNeedsReconnect = true;
+      throw new Error("Google Drive session expired — reconnect in Settings.");
+    }
+    throw e;
+  }
 }
 async function apiJson(method, url, body, contentType) {
   return JSON.parse(await api(method, url, body, contentType));
