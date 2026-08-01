@@ -1,9 +1,21 @@
 # Team Timesheet
 
-Track time per project across **Chrome, Desktop (Windows/macOS/Linux), and
-Android** — synced to your own Google Drive — and auto-fill the Techzu
-**Daily Timesheet Form** (hosted on Fillout) so you're never retyping the
-same entries into a web form by hand.
+Internal tool built for **Techzu Ichicode** — developers use it to track
+time on day-to-day tasks, meetings, and work, then auto-fill the company's
+**Daily Timesheet Form** (Fillout) instead of retyping entries by hand.
+
+Ships as three apps — **Chrome extension**, **Desktop** (Windows/macOS/Linux),
+and **Android** — synced across devices via your own Google Drive.
+
+## Screenshots
+
+| Timer | Timesheet |
+|---|---|
+| ![Timer](docs/images/desktop-timer.png) | ![Timesheet](docs/images/desktop-timesheet.png) |
+
+| Reports | Chrome extension auto-fill |
+|---|---|
+| ![Reports](docs/images/desktop-reports.png) | ![Extension](docs/images/extension-autofill.png) |
 
 ## Why
 
