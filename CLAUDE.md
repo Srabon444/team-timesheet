@@ -77,6 +77,6 @@ npm run tauri build            # installers
 
 - Match surrounding style; comments explain *why* (esp. the automation
   gotchas above — don't "simplify" them away).
-- Commit trailer: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+- No AI co-author trailer in commits/PRs.
 - Keep `desktop/README.md` short and copy-pasteable.
 - Update this file + the relevant ARCHITECTURE.md whenever structure changes.
