@@ -1,10 +1,14 @@
 // Ported from the Chrome extension's popup.js — same form, same fixed lists.
 export const FORM_URL = "https://techzu.fillout.com/t/uhz6TddCX2us";
+// The "Create entry" subform — Project/Category live here, not on FORM_URL.
+export const SUBFORM_URL = "https://techzu.fillout.com/t/kwgd21pozYus";
 
-export const PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "NewERP",
+// Fallback shown until fetchProjectsAndCategories() has run at least once
+// (then app.data.projects/categories from disk take over — see currentProjects()).
+export const DEFAULT_PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "NewERP",
   "Prowork", "Rina CRM", "SME Taskhub", "VSB", "Worksite Mini ERP", "ZuPOS"];
 
-export const CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
+export const DEFAULT_CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
 
 export const CATEGORY_COLORS = {
