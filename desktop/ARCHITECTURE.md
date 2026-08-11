@@ -83,6 +83,11 @@ pre-first-fetch fallback.
    reading WebView2's title off-thread froze the app on Windows 11. The poll
    does not stop on `done` (keeps watching ~30 min for the real submit),
    stops on `submittedConfirmed`/error/window-closed, and dedupes emits.
+5. A successful run (webview `s.done` with `s.added > 0`, or mobile's headless
+   `submitHeadless`) also fires a dated Drive backup (`gdBackupNow`,
+   fire-and-forget, errors swallowed) — captures the moment those entries got
+   marked submitted, separate from the debounced merge-sync App.svelte's
+   `$effect` already fires on any `app.data` change.
 
 ## Packaging / release
 

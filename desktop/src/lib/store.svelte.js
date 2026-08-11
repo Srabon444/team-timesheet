@@ -15,6 +15,7 @@ import { dayTotal } from "./stats.js";
 import * as timer from "./timer.js";
 import { parseNames, parseDropdownOptions } from "./names.js";
 import { buildFillScript } from "./fillout-inject.js";
+import { gdBackupNow } from "./gdrive.js";
 
 function defaults() {
   return {
@@ -255,6 +256,7 @@ export async function submitToFillout(date) {
       timer.markSubmitted(app.data, date, payload.map((p) => p.id));
       markDaySubmitted(date, "auto");
       save();
+      gdBackupNow().catch(() => {}); // dated snapshot right when entries got marked submitted
       app.fill = { running: false, added: n, error: "", message: `Submitted ${n} entr${n === 1 ? "y" : "ies"} to Fillout ✓`, date };
     } catch (e) {
       app.fill = { running: false, added: 0, message: "", error: `Submit failed: ${e.message || e}`, date };
@@ -292,6 +294,9 @@ function listenForFillStatus() {
     if (s.error) {
       app.fill = { ...app.fill, running: false, added: s.added || 0, message: "", error: `Stopped: ${s.error} (${s.added || 0} added)` };
     } else if (s.done) {
+      // Dated snapshot right when entries got marked submitted — skip if this
+      // run added nothing new (e.g. re-clicking with everything already sent).
+      if (s.added > 0) gdBackupNow().catch(() => {});
       const base = `Done — ${s.added} entr${s.added === 1 ? "y" : "ies"} added. Review the Fillout window, then click its Submit yourself.`;
       app.fill = {
         ...app.fill, running: false, added: s.added || 0,
