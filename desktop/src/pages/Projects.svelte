@@ -1,18 +1,19 @@
 <script>
-  import { PROJECTS, projectColor } from "../lib/constants.js";
+  import { projectColor } from "../lib/constants.js";
   import { secToHHMM } from "../lib/time.js";
   import { byProject } from "../lib/stats.js";
-  import { app } from "../lib/store.svelte.js";
+  import { app, currentProjects } from "../lib/store.svelte.js";
 
   const totals = $derived(byProject(app.data.days));
   const max = $derived(Math.max(1, ...Object.values(totals)));
+  const projects = $derived(currentProjects());
 </script>
 
 <h1>Projects</h1>
-<p class="muted">The 11 projects from the Fillout form — fixed list, all-time tracked totals.</p>
+<p class="muted">Projects from the Fillout form — all-time tracked totals.</p>
 
 <div class="list">
-  {#each PROJECTS as p}
+  {#each projects as p}
     <div class="prow">
       <span class="dot" style:background={projectColor(p)}></span>
       <span class="name">{p}</span>

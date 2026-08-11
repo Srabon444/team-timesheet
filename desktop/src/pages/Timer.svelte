@@ -1,5 +1,5 @@
 <script>
-  import { categoryColor, projectColor, PROJECTS, CATEGORIES } from "../lib/constants.js";
+  import { categoryColor, projectColor } from "../lib/constants.js";
   import { todayStr, secToHHMM, secToHHMMSS, secToHMM, hhmmToSec, stripDates, addDays, dayLabel, longDate } from "../lib/time.js";
   import { dayTotal, byCategory } from "../lib/stats.js";
   import {
@@ -7,6 +7,7 @@
     startEntryTimer, pauseEntryTimer, removeEntry,
     entryElapsed, activeEntry, submitToFillout,
     markDaySubmitted, unmarkDaySubmitted, daySubmitted,
+    currentProjects, currentCategories,
   } from "../lib/store.svelte.js";
   import AddEntryModal from "../components/AddEntryModal.svelte";
 
@@ -112,7 +113,7 @@
     {#if menuOpen}
       <div class="proj-menu">
         <div class="pm-head muted">Pick a project</div>
-        {#each PROJECTS as p}
+        {#each currentProjects() as p}
           <div class="pm-item">
             <button class="pm-row" class:open={openProject === p}
                     onmouseenter={() => showCats(p)} onclick={() => showCats(p)}>
@@ -122,7 +123,7 @@
             </button>
             {#if openProject === p}
               <div class="cat-menu">
-                {#each CATEGORIES as c}
+                {#each currentCategories() as c}
                   <button class="cm-row" onclick={() => openPreset(p, c)}>
                     <span class="dot" style:background={categoryColor(c)}></span>{c}
                   </button>

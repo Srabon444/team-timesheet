@@ -9,11 +9,11 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { FORM_URL } from "./constants.js";
+import { FORM_URL, SUBFORM_URL, DEFAULT_PROJECTS, DEFAULT_CATEGORIES } from "./constants.js";
 import { todayStr, secToHHMM } from "./time.js";
 import { dayTotal } from "./stats.js";
 import * as timer from "./timer.js";
-import { parseNames } from "./names.js";
+import { parseNames, parseDropdownOptions } from "./names.js";
 import { buildFillScript } from "./fillout-inject.js";
 
 function defaults() {
@@ -24,6 +24,8 @@ function defaults() {
     timer: { activeId: null, startedAt: null, date: null },
     name: "",
     names: [],
+    projects: [],
+    categories: [],
     lastProject: null,
     lastCategory: null,
     dailyLimitHours: 8,
@@ -163,6 +165,26 @@ export async function fetchNames() {
   app.data.names = names;
   save();
   return names;
+}
+
+// ---------- projects & categories ----------
+// Fallback until fetchProjectsAndCategories() has run once; not sorted (kept
+// in the form's native order, which ends with a catch-all "Others").
+export function currentProjects() {
+  return app.data.projects && app.data.projects.length ? app.data.projects : DEFAULT_PROJECTS;
+}
+export function currentCategories() {
+  return app.data.categories && app.data.categories.length ? app.data.categories : DEFAULT_CATEGORIES;
+}
+export async function fetchProjectsAndCategories() {
+  const html = await invoke("fetch_form_html", { url: SUBFORM_URL });
+  const projects = parseDropdownOptions(html, "Project");
+  const categories = parseDropdownOptions(html, "Work Category");
+  if (!projects.length && !categories.length) throw new Error("could not read projects/categories from the form");
+  if (projects.length) app.data.projects = projects;
+  if (categories.length) app.data.categories = categories;
+  save();
+  return { projects, categories };
 }
 
 // ---------- daily-limit notification + 1s tick ----------

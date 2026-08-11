@@ -27,10 +27,20 @@ off `master`); only `desktop/` differs meaningfully between them.
 
 ## Shared domain facts (identical in both codebases)
 
-- `PROJECTS` = 11 fixed names; `CATEGORIES` = 5 fixed. Per-project and
-  per-category color maps (`projectColor`/`categoryColor`).
-- The form's **Name** list is not in the DOM — it's parsed from the form
-  HTML's `__NEXT_DATA__` JSON (`parseNames`), fetched over HTTP, sorted.
+- `PROJECTS`/`CATEGORIES` (extension: `DEFAULT_PROJECTS`/`DEFAULT_CATEGORIES`)
+  are just the fallback shown before the first fetch — a "Fetch projects &
+  categories" button (Settings) pulls the live lists from the form and
+  overrides them (`S.projects`/`S.categories`, `app.data.projects`/
+  `app.data.categories`), so they drift with the form instead of going stale.
+  Per-project/per-category color maps (`projectColor`/`categoryColor`) have a
+  fallback color for anything not in the map, so new/renamed projects still
+  render.
+- The form's **Name** list is not in the DOM — it's parsed from the main
+  form HTML's `__NEXT_DATA__` JSON (`parseNames`/`fetchNames`), fetched over
+  HTTP, sorted. **Project/Category** are parsed the same way but from the
+  "Create entry" **subform**'s `__NEXT_DATA__` (a different Fillout form,
+  embedded as the entry-creation iframe) — kept in the form's native order
+  (not sorted), since it ends with a catch-all "Others".
 - **Fillout automation** (both products): the "Create" entry subform is an
   iframe. Fields are **react-select** — selected by typing the value into
   `input[role=combobox]` + a synthetic `Enter` (works with untrusted
