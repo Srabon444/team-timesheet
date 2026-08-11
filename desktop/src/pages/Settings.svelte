@@ -1,5 +1,5 @@
 <script>
-  import { app, save, applyTheme, fetchNames, showConfirm } from "../lib/store.svelte.js";
+  import { app, save, applyTheme, fetchNames, fetchProjectsAndCategories, showConfirm } from "../lib/store.svelte.js";
   import { gdConnected, gdConnect, gdDisconnect, gdSync, gdBackupNow, gdListBackups, gdRestoreFile } from "../lib/gdrive.js";
 
   let fetching = $state(false);
@@ -15,6 +15,21 @@
       fetchMsg = `Error: ${e.message || e}`;
     }
     fetching = false;
+  }
+
+  let fetchingPC = $state(false);
+  let fetchPCMsg = $state("");
+
+  async function loadProjectsAndCategories() {
+    fetchingPC = true;
+    fetchPCMsg = "";
+    try {
+      const { projects, categories } = await fetchProjectsAndCategories();
+      fetchPCMsg = `Loaded ${projects.length} projects, ${categories.length} categories.`;
+    } catch (e) {
+      fetchPCMsg = `Error: ${e.message || e}`;
+    }
+    fetchingPC = false;
   }
 
   // ---- Backup / transfer (Task 1: manual export/paste bridge) ----
@@ -155,6 +170,17 @@
   </div>
   {#if fetchMsg}<p class="muted small">{fetchMsg}</p>{/if}
   <p class="muted small">Used to auto-select the Name field when submitting to Fillout.</p>
+</section>
+
+<section>
+  <h2>Projects &amp; categories</h2>
+  <div class="row-inline">
+    <button class="btn" onclick={loadProjectsAndCategories} disabled={fetchingPC}>
+      {fetchingPC ? "Fetching…" : "Fetch projects & categories"}
+    </button>
+  </div>
+  {#if fetchPCMsg}<p class="muted small">{fetchPCMsg}</p>{/if}
+  <p class="muted small">Re-fetches the live Project and Category lists from the form.</p>
 </section>
 
 <section>

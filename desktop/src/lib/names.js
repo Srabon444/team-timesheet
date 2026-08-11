@@ -1,7 +1,7 @@
-// Ported from the Chrome extension's popup.js: the form's Name dropdown
+// Ported from the Chrome extension's popup.js: Name/Project/Category dropdown
 // options are static, embedded in the server-rendered __NEXT_DATA__ JSON.
 // Parse them out of the raw HTML — no browser, no DOM scraping.
-export function parseNames(html) {
+export function parseDropdownOptions(html, fieldName) {
   const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
   if (!m) return [];
   let data;
@@ -10,12 +10,12 @@ export function parseNames(html) {
   } catch {
     return [];
   }
-  let names = [];
+  let opts = [];
   (function walk(o) {
     if (o && typeof o === "object") {
-      const so = o.name === "Name" && o.template && o.template.options && o.template.options.staticOptions;
+      const so = o.name === fieldName && o.template && o.template.options && o.template.options.staticOptions;
       if (so) {
-        names = so
+        opts = so
           .map((x) => {
             try {
               return x.value.logic.value;
@@ -28,5 +28,8 @@ export function parseNames(html) {
       for (const k in o) walk(o[k]);
     }
   })(data);
-  return names.sort((a, b) => a.localeCompare(b));
+  return opts;
+}
+export function parseNames(html) {
+  return parseDropdownOptions(html, "Name").sort((a, b) => a.localeCompare(b));
 }

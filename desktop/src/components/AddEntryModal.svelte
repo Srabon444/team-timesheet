@@ -1,9 +1,9 @@
 <script>
-  import { PROJECTS, CATEGORIES } from "../lib/constants.js";
   import { todayStr, hhmmToSec } from "../lib/time.js";
   import {
     app, addEntry, updateEntry, removeEntry,
     startEntryTimer, setEntryTime, entryElapsed, showConfirm,
+    currentProjects, currentCategories,
   } from "../lib/store.svelte.js";
 
   // { date, entry|null (edit mode), presetProject, presetCategory } — parent
@@ -18,7 +18,7 @@
   // day has an entry, later Adds preselect that day's most recent project.
   // A preset (hover-menu pick) wins over both.
   let project = $state(entry ? entry.project : (presetProject || (lastForDay ? lastForDay.project : "")));
-  let category = $state(entry ? entry.category : (presetCategory || (lastForDay ? lastForDay.category : CATEGORIES[2])));
+  let category = $state(entry ? entry.category : (presetCategory || (lastForDay ? lastForDay.category : currentCategories()[2])));
   let description = $state(entry ? entry.description : "");
   // Seed from the entry's LIVE elapsed (not just accSec), so editing a
   // running task shows the real running time — the fix for elapsed getting
@@ -34,7 +34,7 @@
   function validate() {
     const desc = description.trim();
     if (!desc) { error = "Description is required."; return null; }
-    if (!PROJECTS.includes(project)) { error = "Pick a project from the list."; return null; }
+    if (!currentProjects().includes(project)) { error = "Pick a project from the list."; return null; }
     return desc;
   }
 
@@ -84,12 +84,12 @@
       {/if}
     </div>
     <datalist id="projects">
-      {#each PROJECTS as p}<option value={p}></option>{/each}
+      {#each currentProjects() as p}<option value={p}></option>{/each}
     </datalist>
 
     <label for="cat">Work Category</label>
     <select id="cat" bind:value={category}>
-      {#each CATEGORIES as c}<option value={c}>{c}</option>{/each}
+      {#each currentCategories() as c}<option value={c}>{c}</option>{/each}
     </select>
 
     <label for="desc">Description <span class="req">*</span></label>
