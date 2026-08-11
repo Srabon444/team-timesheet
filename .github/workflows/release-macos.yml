@@ -48,6 +48,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Drive OAuth secret, compiled in via option_env! (kept out of source).
           GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+          # Node 22's bundled CA list rejected the runner's cert talking to the
+          # GitHub API ("self-signed certificate" on the release-fetch call) —
+          # this is Node's own suggested fix: consult the OS trust store instead.
+          NODE_OPTIONS: --use-system-ca
         with:
           projectPath: desktop
           tagName: ${{ steps.tag.outputs.tag }}
