@@ -11,8 +11,8 @@ import {
   byProject, byCategory, mondayOf, weekDates, weekTotals,
 } from "../src/lib/stats.js";
 import * as timer from "../src/lib/timer.js";
-import { parseNames } from "../src/lib/names.js";
-import { categoryColor, projectColor, PROJECTS, CATEGORIES } from "../src/lib/constants.js";
+import { parseNames, parseDropdownOptions } from "../src/lib/names.js";
+import { categoryColor, projectColor, DEFAULT_PROJECTS, DEFAULT_CATEGORIES } from "../src/lib/constants.js";
 import { buildFillScript } from "../src/lib/fillout-inject.js";
 import { mergeDays } from "../src/lib/gdrive.js";
 
@@ -201,6 +201,23 @@ describe("parseNames (against the real captured form HTML)", () => {
   });
 });
 
+describe("parseDropdownOptions (against the real captured subform HTML)", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "..", "test", "fixtures", "subform.html"), "utf8");
+  it("extracts all 19 projects, in the form's native order (not sorted)", () => {
+    const projects = parseDropdownOptions(html, "Project");
+    expect(projects).toHaveLength(19);
+    expect(projects[projects.length - 1]).toBe("Others"); // catch-all stays last, not alphabetized
+  });
+  it("extracts all 5 work categories", () => {
+    const categories = parseDropdownOptions(html, "Work Category");
+    expect(categories).toHaveLength(5);
+    expect(categories).toContain("Meeting (General)");
+  });
+  it("returns [] on junk input", () => {
+    expect(parseDropdownOptions("<html></html>", "Project")).toEqual([]);
+  });
+});
+
 describe("colors", () => {
   it("categories and projects each get distinct, stable colors with fallbacks", () => {
     expect(categoryColor("Development")).not.toBe(categoryColor("Code Review"));
@@ -208,8 +225,8 @@ describe("colors", () => {
     expect(categoryColor("Nope")).toBeTruthy();
     expect(projectColor("ZuPOS")).not.toBe(projectColor("VSB"));
     expect(projectColor("Nope")).toBeTruthy();
-    expect(PROJECTS).toHaveLength(11);
-    expect(CATEGORIES).toHaveLength(5);
+    expect(DEFAULT_PROJECTS).toHaveLength(11);
+    expect(DEFAULT_CATEGORIES).toHaveLength(5);
   });
 });
 

@@ -16,12 +16,11 @@
 // form's __NEXT_DATA__ (people and projects can change). The structural
 // step/field IDs are stable form-definition constants, hardcoded below.
 import { invoke } from "@tauri-apps/api/core";
-import { FORM_URL } from "./constants.js";
+import { FORM_URL, SUBFORM_URL } from "./constants.js";
 
 // ponytail: hardcoded form/step/field IDs — stable unless the form is rebuilt
 // from scratch, in which case every ID changes and this needs regenerating.
 const PARENT_FLOW = FORM_URL.match(/\/t\/([^/?#]+)/)[1]; // uhz6TddCX2us
-const SUBFORM_URL = "https://techzu.fillout.com/t/kwgd21pozYus";
 const STEP_PARENT = "sZmQ";
 const STEP_ENTRY = "e2oh";
 const F_NAME = "9FTQ";

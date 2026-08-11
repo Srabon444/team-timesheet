@@ -19,8 +19,10 @@ desktop/
                             nav{page,jumpDate}, submittedDays helpers
       timer.js              pure timer engine (fold/start/pause/edit, rollover)
       time.js stats.js      pure date + dashboard math (ported from extension)
-      constants.js          PROJECTS/CATEGORIES + color maps
-      names.js              parseNames(__NEXT_DATA__)
+      constants.js          DEFAULT_PROJECTS/DEFAULT_CATEGORIES (pre-fetch
+                            fallback) + color maps + FORM_URL/SUBFORM_URL
+      names.js              parseDropdownOptions(__NEXT_DATA__, fieldName);
+                            parseNames() = sorted "Name" wrapper
       fillout-inject.js     buildFillScript(): the whole injected automation as
                             one stringified IIFE
     components/
@@ -34,7 +36,7 @@ desktop/
   src-tauri/
     src/lib.rs              commands + Fillout window + title-poll bridge
     tauri.conf.json         window config; bundle.targets differ per branch
-  tests/lib.test.js         vitest (24)
+  tests/lib.test.js         vitest (35 incl. gdrive-reconnect.test.js)
 ```
 
 ## State & persistence
@@ -49,6 +51,15 @@ cross-page day jumps.
 Data: `days{date: entries[]}`, `timer{activeId, startedAt, date}`,
 `submittedDays{date:{at,method}}` (show-only), plus scalar settings. Entry:
 `{id, project, category, description, accSec, submitted}`.
+
+`projects[]`/`categories[]` start empty; Settings' "Fetch projects &
+categories" (`fetchProjectsAndCategories`) fills them from the live
+`SUBFORM_URL` form (same idea as `fetchNames`, but the "Create entry"
+subform, not the main form). `currentProjects()`/`currentCategories()` —
+used everywhere a project/category list is needed (`Timer.svelte`,
+`AddEntryModal.svelte`, `Projects.svelte`) — prefer these over
+`DEFAULT_PROJECTS`/`DEFAULT_CATEGORIES`, which now exist only as the
+pre-first-fetch fallback.
 
 ## Fillout automation (Final Submit)
 
@@ -82,6 +93,6 @@ and prunes older releases for that OS. See [../CLAUDE.md](../CLAUDE.md).
 
 ## Tests
 
-`npm test` (vitest, 24) covers time/stats/timer/parseNames/colors and
-`buildFillScript` validity + payload escaping. `cargo check` for the Rust.
+`npm test` (vitest, 35) covers time/stats/timer/parseNames/parseDropdownOptions/
+colors and `buildFillScript` validity + payload escaping. `cargo check` for the Rust.
 No headless Fillout run here — the automation is verified live.
