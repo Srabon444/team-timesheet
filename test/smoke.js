@@ -794,6 +794,7 @@ async function harness5() {
   console.log("\n== Harness 5: tab shell nav + Today section reuse ==");
   const tabHtml = fs.readFileSync(path.join(ROOT, "tab.html"), "utf8");
   const tabJsSrc = fs.readFileSync(path.join(ROOT, "tab.js"), "utf8");
+  const realSubform = fs.readFileSync(path.join(ROOT, "test", "fixtures", "subform.html"), "utf8");
   const store = {};
   const chrome = {
     storage: { local: {
@@ -807,7 +808,7 @@ async function harness5() {
   const win = dom.window;
   win.chrome = chrome;
   win.matchMedia = () => ({ matches: false });
-  win.fetch = async () => ({ text: async () => "" });
+  win.fetch = async (url) => ({ text: async () => (String(url).includes("kwgd21pozYus") ? realSubform : "") });
   win.crypto = { randomUUID: () => "id-tab" };
   const s1 = win.document.createElement("script");
   s1.textContent = jsSrc; // popup.js
@@ -893,6 +894,16 @@ async function harness5() {
   await sleep(20);
   A(store.theme === "light", "clicking Light persists the theme");
   A(win.document.documentElement.dataset.theme === "light", "clicking Light applies data-theme immediately");
+
+  // "Fetch projects & categories" — pulls the live lists from the subform,
+  // overriding the hardcoded defaults (Task: keep them from going stale).
+  $("loadProjects").click();
+  await sleep(80);
+  A(store.projects && store.projects.length === 19, "19 projects parsed from real subform HTML");
+  A(store.projects.includes("Others") && store.projects[store.projects.length - 1] === "Others", "projects keep the form's native order (catch-all 'Others' stays last, not alphabetized)");
+  A(store.categories && store.categories.length === 5, "5 categories parsed from real subform HTML");
+  A($("catSelect").options.length === 5 && $("catSelect").options[0].value === "Meeting (General)", "catSelect is repopulated from the freshly fetched categories");
+  A(win.currentProjects() === store.projects, "currentProjects() prefers the fetched list over the hardcoded default");
 
   // name picker in Settings updates S.name and refreshes the Today panel
   store.names = ["Debjit Paul", "Ashis Hira"];

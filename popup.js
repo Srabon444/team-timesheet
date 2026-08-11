@@ -1,10 +1,19 @@
 "use strict";
 
 const FORM_URL = "https://techzu.fillout.com/t/uhz6TddCX2us";
-const PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "NewERP",
+// The "Create entry" subform (Project/Category live here, not the main form) —
+// same site as FORM_URL, fetched separately for "Fetch projects" (Task: keep
+// the Project/Category lists in sync with the live form instead of frozen at
+// whatever they were when this file was last edited).
+const SUBFORM_URL = "https://techzu.fillout.com/t/kwgd21pozYus";
+// Fallback used until the user fetches the live lists at least once (then
+// S.projects/S.categories from storage take over — see currentProjects()).
+const DEFAULT_PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "NewERP",
   "Prowork", "Rina CRM", "SME Taskhub", "VSB", "Worksite Mini ERP", "ZuPOS"];
-const CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
+const DEFAULT_CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
+function currentProjects() { return (S.projects && S.projects.length) ? S.projects : DEFAULT_PROJECTS; }
+function currentCategories() { return (S.categories && S.categories.length) ? S.categories : DEFAULT_CATEGORIES; }
 // Category color coding, matching the reference screenshots' Topic badges.
 const CATEGORY_COLORS = {
   "Meeting (General)": "#f59e0b",
@@ -193,7 +202,7 @@ function showMain() {
   $("whoName").textContent = S.name;
   $("whoDate").textContent = S.date;
   viewDate = S.date;
-  fillSelect($("catSelect"), CATEGORIES);
+  fillSelect($("catSelect"), currentCategories());
   updateDayNav();
   refreshAddForm();
   render();
@@ -278,8 +287,8 @@ function refreshAddForm() {
   // drop a stale edit target that was deleted
   if (S.draft && S.draft.editingId && !S.entries.some((e) => e.id === S.draft.editingId)) S.draft = null;
   const d = S.draft;
-  $("projSelect").value = (d && d.project) || S.lastProject || PROJECTS[0];
-  $("catSelect").value = (d && d.category) || S.lastCategory || CATEGORIES[0];
+  $("projSelect").value = (d && d.project) || S.lastProject || currentProjects()[0];
+  $("catSelect").value = (d && d.category) || S.lastCategory || currentCategories()[0];
   $("descInput").value = (d && d.description) || "";
   if ($("timeInput")) $("timeInput").value = (d && d.time) || "00:00";
   const editing = !!(d && d.editingId);
@@ -525,27 +534,32 @@ async function submitDraft() {
   render();
 }
 
-// ---------- name loading ----------
-// Names are static options embedded in the form's server-rendered
-// __NEXT_DATA__ (Name Dropdown widget). Fetch + parse — no tab, no DOM scrape.
-function parseNames(html) {
+// ---------- name / project / category loading ----------
+// Names, Projects and Categories are all static options embedded in a form's
+// server-rendered __NEXT_DATA__ (a Dropdown widget). Fetch + parse — no tab,
+// no DOM scrape. Name lives on the main form; Project/Category live on the
+// "Create entry" subform (SUBFORM_URL).
+function parseDropdownOptions(html, fieldName) {
   const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
   if (!m) return [];
   let data;
   try { data = JSON.parse(m[1]); } catch { return []; }
-  let names = [];
+  let opts = [];
   (function walk(o) {
     if (o && typeof o === "object") {
-      const so = o.name === "Name" && o.template && o.template.options && o.template.options.staticOptions;
+      const so = o.name === fieldName && o.template && o.template.options && o.template.options.staticOptions;
       if (so) {
-        names = so
+        opts = so
           .map((x) => { try { return x.value.logic.value; } catch { return null; } })
           .filter(Boolean);
       }
       for (const k in o) walk(o[k]);
     }
   })(data);
-  return names.sort((a, b) => a.localeCompare(b));
+  return opts;
+}
+function parseNames(html) {
+  return parseDropdownOptions(html, "Name").sort((a, b) => a.localeCompare(b));
 }
 async function loadNames() {
   const st = $("setupStatus");
@@ -564,6 +578,31 @@ async function loadNames() {
     $("setupPicker").classList.remove("hidden");
     st.className = "status ok";
     st.textContent = `Loaded ${names.length} names. Pick yours.`;
+  } catch (err) {
+    st.className = "status err";
+    st.textContent = "Error: " + err.message;
+  }
+}
+async function loadProjectsAndCategories() {
+  const st = $("pcStatus");
+  if (!st) return;
+  st.className = "status";
+  st.textContent = "Loading projects & categories…";
+  try {
+    const res = await fetch(SUBFORM_URL, { credentials: "omit" });
+    const html = await res.text();
+    const projects = parseDropdownOptions(html, "Project");
+    const categories = parseDropdownOptions(html, "Work Category");
+    if (!projects.length && !categories.length) {
+      st.className = "status err";
+      st.textContent = "Could not read projects/categories from form.";
+      return;
+    }
+    if (projects.length) { S.projects = projects; await chrome.storage.local.set({ projects }); }
+    if (categories.length) { S.categories = categories; await chrome.storage.local.set({ categories }); }
+    if ($("catSelect")) fillSelect($("catSelect"), currentCategories());
+    st.className = "status ok";
+    st.textContent = `Loaded ${projects.length} projects, ${categories.length} categories.`;
   } catch (err) {
     st.className = "status err";
     st.textContent = "Error: " + err.message;
@@ -997,6 +1036,7 @@ async function fillFormOnPage(tabId, entries, name) {
 // ---------- wiring ----------
 document.addEventListener("DOMContentLoaded", () => {
   $("loadNames").onclick = loadNames;
+  if ($("loadProjects")) $("loadProjects").onclick = loadProjectsAndCategories;
   $("saveName").onclick = saveName;
   if ($("openFullView")) $("openFullView").onclick = openFullView;
   $("changeName").onclick = showSetup;
@@ -1029,7 +1069,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
-  setupSearchSelect($("projSelect"), $("projList"), () => PROJECTS);
+  setupSearchSelect($("projSelect"), $("projList"), () => currentProjects());
   setupSearchSelect($("nameSelect"), $("nameList"), () => S.names || []);
   init();
 });

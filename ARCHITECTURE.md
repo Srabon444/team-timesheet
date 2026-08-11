@@ -15,6 +15,7 @@ MV3 extension. Popup for daily tracking + a full-page tab view
 | `popup.css` / `tab.css` / `theme.css` | Styles + light/dark custom properties. |
 | `test/smoke.js` | jsdom-driven smoke suite (no framework). `npm test`. |
 | `test/fixtures/form.html` | Real captured form HTML (21 names) for `parseNames` tests. |
+| `test/fixtures/subform.html` | Real captured "Create entry" subform HTML (19 projects, 5 categories) for `loadProjectsAndCategories` tests. |
 
 ## State (`S`, mirrors `chrome.storage.local`)
 
@@ -58,6 +59,20 @@ subform frame:
 4. `finalSubmit` marks the successfully-added entries `submitted`. Operates
    on `currentEntries()`, so a past day can be filled too (with a reminder
    to set the form's Date field first).
+
+## Projects & categories loading
+
+Same idea as Name loading, but sourced from the "Create entry" **subform**
+(`SUBFORM_URL`) rather than the main form — Project/Category live there, not
+on the main page's `__NEXT_DATA__`. `parseDropdownOptions(html, fieldName)`
+generalizes the old `parseNames`-only walk; `parseNames` is now a thin sorted
+wrapper over it. Project/Category are deliberately **not** alphabetized —
+they're kept in the form's native order, which ends with a catch-all
+"Others" that would otherwise get shuffled into the middle. Settings' "Fetch
+projects & categories" button (`loadProjectsAndCategories`) overwrites
+`S.projects`/`S.categories`; `currentProjects()`/`currentCategories()` prefer
+those over the `DEFAULT_PROJECTS`/`DEFAULT_CATEGORIES` fallback consts, which
+now exist only so the app has something to show before the first fetch.
 
 ## Transfer
 
