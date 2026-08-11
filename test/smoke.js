@@ -209,6 +209,8 @@ async function harness1() {
   A(lastFill === null, "Cancel in modal -> no form fill");
   A($("confirmOverlay").classList.contains("hidden"), "modal hides after Cancel");
 
+  let gdBackupCalls = 0;
+  win.gdBackupNow = () => { gdBackupCalls++; return Promise.resolve(); };
   fillFormReturn = { added: 2 };
   $("finalSubmit").click();
   await sleep(30);
@@ -222,14 +224,18 @@ async function harness1() {
   // reloading; ensureFormTab now auto-reloads once for a brand-NEW tab...
   A(reloadCount === 1, `ensureFormTab reloads once for a newly created tab (got ${reloadCount})`);
   A(store.entries.every((e) => e.submitted), "every entry is marked submitted after a successful Final Submit");
+  A(gdBackupCalls === 1, "a successful Final Submit triggers a dated Drive backup");
 
   // BUG FIX regression: clicking Final Submit again with nothing new pending
-  // must NOT re-send the already-submitted entries a second time.
+  // must NOT re-send the already-submitted entries a second time — and must
+  // NOT trigger a pointless Drive backup either.
   lastFill = null;
+  gdBackupCalls = 0;
   $("finalSubmit").click();
   await sleep(20);
   A(lastFill === null, "Final Submit with everything already submitted does not resubmit anything");
   A($("submitStatus").textContent.toLowerCase().includes("already submitted"), "status explains everything is already submitted");
+  A(gdBackupCalls === 0, "no new entries added -> no Drive backup triggered");
 
   // Add ONE new entry -> only that new entry should be sent next time, not
   // the two already-submitted ones. Also re-verifies ensureFormTab now

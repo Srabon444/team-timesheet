@@ -58,7 +58,10 @@ subform frame:
    `waitForEntryVisible` (entries-list race).
 4. `finalSubmit` marks the successfully-added entries `submitted`. Operates
    on `currentEntries()`, so a past day can be filled too (with a reminder
-   to set the form's Date field first).
+   to set the form's Date field first). On success it also fires a dated
+   Drive backup (`gdBackupNow`, fire-and-forget, errors swallowed) — captures
+   the moment those entries got marked submitted. Skipped entirely if
+   nothing new was added (re-clicking with everything already submitted).
 
 ## Projects & categories loading
 

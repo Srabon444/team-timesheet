@@ -721,7 +721,13 @@ async function finalSubmit() {
     // failure, so the first `added` of them are the ones that succeeded.
     const addedCount = out ? out.added : 0;
     for (let i = 0; i < addedCount; i++) pending[i].submitted = true;
-    if (addedCount > 0) { await persistCurrent(); render(); }
+    // Dated Drive snapshot right at the moment entries are marked submitted —
+    // best-effort: skip quietly if Drive isn't connected or nothing's there yet.
+    if (addedCount > 0) {
+      await persistCurrent();
+      render();
+      if (typeof gdBackupNow === "function") gdBackupNow().catch(() => {});
+    }
     // Auto-detect the user's real Submit (Task 7): leave a watcher in the form
     // tab that marks this day submitted when the "Thank you" screen appears.
     if (addedCount > 0) {
