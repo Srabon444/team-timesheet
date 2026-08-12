@@ -22,6 +22,7 @@
   let copyMode = $state(false);
   let copySelected = $state(new Set());
   let copyModalOpen = $state(false);
+  let copyStatus = $state("");
   // Quick-add menu opens on hover OR click. The menu sits flush under its
   // trigger (no gap) and is a DOM child of the hover region, so moving the
   // cursor into it never fires a leave — the old "vanishes when I reach for
@@ -111,10 +112,12 @@
     selected; // selection is scoped to whichever day is being viewed
     copyMode = false;
     copySelected = new Set();
+    copyStatus = "";
   });
   function toggleCopyMode() {
     copyMode = !copyMode;
     if (!copyMode) copySelected = new Set();
+    copyStatus = "";
   }
   function toggleCopySelect(id, checked) {
     const next = new Set(copySelected);
@@ -122,12 +125,14 @@
     copySelected = next;
   }
   function copyToTarget(targetDate) {
+    let n = 0;
     for (const e of entries) {
-      if (copySelected.has(e.id)) addEntry(targetDate, { project: e.project, category: e.category, description: e.description });
+      if (copySelected.has(e.id)) { addEntry(targetDate, { project: e.project, category: e.category, description: e.description }); n++; }
     }
     copyModalOpen = false;
     copyMode = false;
     copySelected = new Set();
+    copyStatus = `✓ Copied ${n} task${n === 1 ? "" : "s"} to ${targetDate}.`;
   }
 </script>
 
@@ -216,6 +221,8 @@
     <button class="tabbtn" class:on={tab === "timesheet"} onclick={() => (tab = "timesheet")}>☰ Timesheet</button>
   </div>
 </div>
+
+{#if copyStatus}<p class="status-ok">{copyStatus}</p>{/if}
 
 {#if tab === "timesheet"}
   {#if entries.length === 0}
