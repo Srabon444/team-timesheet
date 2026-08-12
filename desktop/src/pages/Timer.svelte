@@ -4,18 +4,24 @@
   import { dayTotal, byCategory } from "../lib/stats.js";
   import {
     app, nav, save, showConfirm,
-    startEntryTimer, pauseEntryTimer, removeEntry,
+    startEntryTimer, pauseEntryTimer, removeEntry, addEntry,
     entryElapsed, activeEntry, submitToFillout,
     markDaySubmitted, unmarkDaySubmitted, daySubmitted,
     currentProjects, currentCategories,
   } from "../lib/store.svelte.js";
   import AddEntryModal from "../components/AddEntryModal.svelte";
+  import CopyToModal from "../components/CopyToModal.svelte";
 
   let selected = $state(nav.jumpDate || todayStr());
   let anchor = $state(nav.jumpDate || todayStr()); // day-strip window end
   nav.jumpDate = null;
   let tab = $state("timesheet");
   let modal = $state(null); // { entry|null, presetProject?, presetCategory? }
+  // Copy Tasks: checkbox-select entries on the viewed day, then copy them
+  // (fresh, time reset to 0) into a same-or-future day.
+  let copyMode = $state(false);
+  let copySelected = $state(new Set());
+  let copyModalOpen = $state(false);
   // Quick-add menu opens on hover OR click. The menu sits flush under its
   // trigger (no gap) and is a DOM child of the hover region, so moving the
   // cursor into it never fires a leave — the old "vanishes when I reach for
@@ -87,14 +93,41 @@
       app.fill = { ...app.fill, error: "Pick your name first (Settings, or the selector below)." };
       return;
     }
-    const zeros = entries.filter((e) => entryElapsed(e) < 30).length;
+    const under1min = entries.filter((e) => entryElapsed(e) < 60);
+    if (under1min.length) {
+      app.fill = { ...app.fill, error: `${under1min.length} entr${under1min.length === 1 ? "y" : "ies"} have under 1 minute tracked — set a real time before submitting.` };
+      return;
+    }
     const msg =
       `Re-fill Fillout with all ${entries.length} entr${entries.length === 1 ? "y" : "ies"} for this day?` +
       `\nThis clears any existing entries already in the form, then adds these fresh.` +
-      (zeros ? `\n${zeros} have ~00:00 time.` : "") +
       `\n\nThe form's own final Submit stays yours to click.`;
     if (!(await showConfirm(msg, "Yes, auto-fill"))) return;
     submitToFillout(selected);
+  }
+
+  // Copy Tasks
+  $effect(() => {
+    selected; // selection is scoped to whichever day is being viewed
+    copyMode = false;
+    copySelected = new Set();
+  });
+  function toggleCopyMode() {
+    copyMode = !copyMode;
+    if (!copyMode) copySelected = new Set();
+  }
+  function toggleCopySelect(id, checked) {
+    const next = new Set(copySelected);
+    if (checked) next.add(id); else next.delete(id);
+    copySelected = next;
+  }
+  function copyToTarget(targetDate) {
+    for (const e of entries) {
+      if (copySelected.has(e.id)) addEntry(targetDate, { project: e.project, category: e.category, description: e.description });
+    }
+    copyModalOpen = false;
+    copyMode = false;
+    copySelected = new Set();
   }
 </script>
 
@@ -169,7 +202,15 @@
 </div>
 
 <div class="toolbar">
-  <button class="btn ghost" onclick={() => (modal = { entry: null })}>+ Add</button>
+  <div class="toolbar-left">
+    <button class="btn ghost" onclick={() => (modal = { entry: null })}>+ Add</button>
+    {#if entries.length}
+      <button class="btn ghost" onclick={toggleCopyMode}>{copyMode ? "Cancel" : "Copy Tasks"}</button>
+      {#if copyMode && copySelected.size > 0}
+        <button class="btn ghost" onclick={() => (copyModalOpen = true)}>Copy to ({copySelected.size})</button>
+      {/if}
+    {/if}
+  </div>
   <div class="tabs">
     <button class="tabbtn" class:on={tab === "summary"} onclick={() => (tab = "summary")}>▤ Summary</button>
     <button class="tabbtn" class:on={tab === "timesheet"} onclick={() => (tab = "timesheet")}>☰ Timesheet</button>
@@ -184,6 +225,10 @@
       {#each entries as e (e.id)}
         {@const isRunning = app.data.timer.activeId === e.id}
         <div class="row" class:active={isRunning}>
+          {#if copyMode}
+            <input type="checkbox" class="copyChk" checked={copySelected.has(e.id)}
+                   onchange={(ev) => toggleCopySelect(e.id, ev.target.checked)} />
+          {/if}
           <span class="dot" style:background={isRunning ? "var(--success)" : "var(--text-muted)"}></span>
           <div class="row-main">
             <div class="row-title">{e.description}</div>
@@ -275,6 +320,10 @@
     presetCategory={modal.presetCategory || ""}
     onclose={() => (modal = null)}
   />
+{/if}
+
+{#if copyModalOpen}
+  <CopyToModal minDate={today} onclose={() => (copyModalOpen = false)} onconfirm={copyToTarget} />
 {/if}
 
 <style>
@@ -377,7 +426,8 @@
     .daycard { flex: 0 0 72px; }
   }
 
-  .toolbar { display: flex; align-items: center; justify-content: space-between; margin: 26px 0 12px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin: 26px 0 12px; flex-wrap: wrap; gap: 10px; }
+  .toolbar-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .tabs { display: flex; gap: 4px; }
   .tabbtn {
     background: none; border: none; cursor: pointer;
@@ -414,6 +464,7 @@
   .iconbtn.edit { color: var(--accent-light); border-color: var(--accent-light); }
   .iconbtn.del { color: var(--danger-light); border-color: var(--danger-light); }
   .iconbtn:hover { background: var(--bg-surface-hover); }
+  .copyChk { width: auto; min-height: 0; flex: none; margin: 0; }
 
   .summary { max-width: 560px; }
   .sumrow {

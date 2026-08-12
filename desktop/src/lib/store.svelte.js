@@ -238,6 +238,15 @@ export async function submitToFillout(date) {
   }
   timer.pauseTimer(app.data); // finalize times before building the payload
   save();
+  // Checked on raw elapsed seconds, not a minute-rounded hh:mm display —
+  // Timer.svelte's confirm-dialog check (finalSubmit) already blocks before
+  // this is reached, but re-check here too since this is the actual trust
+  // boundary for anything that writes to Fillout.
+  const under1min = list.filter((e) => timer.elapsedSec(app.data, e) < 60);
+  if (under1min.length) {
+    app.fill = { running: false, added: 0, message: "", error: `${under1min.length} entr${under1min.length === 1 ? "y" : "ies"} have under 1 minute tracked — set a real time before submitting.` };
+    return;
+  }
   const payload = list.map((e) => ({
     id: e.id,
     project: e.project,
@@ -265,7 +274,7 @@ export async function submitToFillout(date) {
   }
   app.fill = { running: true, added: 0, message: "Opening Fillout…", error: "", date };
   const url = `${FORM_URL}?name=${encodeURIComponent(app.data.name)}`;
-  await invoke("open_fillout", { url, script: buildFillScript(payload, app.data.name) });
+  await invoke("open_fillout", { url, script: buildFillScript(payload, app.data.name, date) });
 }
 
 function isMobile() {
@@ -307,6 +316,8 @@ function listenForFillStatus() {
       app.fill = { ...app.fill, message: "Form loading…" };
     } else if (s.phase === "name-selected") {
       app.fill = { ...app.fill, message: "Name selected…" };
+    } else if (s.phase === "date-selected") {
+      app.fill = { ...app.fill, message: "Date set…" };
     } else if (s.phase === "clearing-entries") {
       app.fill = { ...app.fill, message: "Clearing existing entries…" };
     } else if (s.phase === "progress") {
