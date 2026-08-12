@@ -477,11 +477,15 @@ async function harness1() {
     "clone carries over project/category/description");
   A(clone.accSec === 0, "clone's time is reset to 0, not copied from the source");
   A(!clone.submitted, "clone is not marked submitted");
+  A($("copyStatus").className === "status ok", "success message uses the green 'ok' status style");
+  A($("copyStatus").textContent === `✓ Copied 1 task to ${futureDate}.`, "success message shows a checkmark, count, and target date");
 
   // Copying to TODAY (the default date the picker opens with) appends
-  // straight into S.entries instead of S.history.
+  // straight into S.entries instead of S.history. Re-entering Copy Tasks
+  // mode also clears the previous success message.
   $("copyModeBtn").click();
   await sleep(10);
+  A($("copyStatus").textContent === "", "success message clears when Copy Tasks mode is re-entered");
   win.document.querySelector(".entry .copyChk").checked = true;
   win.document.querySelector(".entry .copyChk").dispatchEvent(new win.Event("change"));
   await sleep(10);

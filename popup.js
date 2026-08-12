@@ -284,6 +284,7 @@ function setViewDate(dateStr) {
   clearDraft(); // drop any in-progress edit when changing days
   copyMode = false; // selection was scoped to the day we're leaving
   copySelected.clear();
+  if ($("copyStatus")) $("copyStatus").textContent = "";
   updateDayNav();
   render();
 }
@@ -492,6 +493,7 @@ async function deleteEntry(id) {
 function toggleCopyMode() {
   copyMode = !copyMode;
   if (!copyMode) copySelected.clear();
+  if ($("copyStatus")) $("copyStatus").textContent = "";
   render();
 }
 function toggleCopySelect(id, checked) {
@@ -545,6 +547,11 @@ async function confirmCopyTo() {
   copyMode = false;
   copySelected.clear();
   render();
+  const doneSt = $("copyStatus");
+  if (doneSt) {
+    doneSt.className = "status ok";
+    doneSt.textContent = `✓ Copied ${clones.length} task${clones.length === 1 ? "" : "s"} to ${target}.`;
+  }
 }
 
 // live-update the running entry's time field (skip if user is editing it)
