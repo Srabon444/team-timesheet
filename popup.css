@@ -67,12 +67,18 @@ select {
 /* Day navigator for browsing / back-filling past days (Task 4b) */
 .dayNav { display: flex; align-items: center; gap: 8px; margin: 4px 0 2px; }
 .dayNav .link { font-size: 16px; }
-.dayNav input[type="date"] {
+.dayNav input[type="date"], #copyToDate {
   background: var(--bg-surface); color: var(--text-primary);
   border: 1px solid var(--bg-surface-2, var(--bg-surface)); border-radius: 6px;
   padding: 3px 6px; font-size: 12px; color-scheme: dark light;
 }
 .dayNav #todayBtn { margin-left: auto; }
+
+/* Copy Tasks (Req 1): mode toggle + the "Copy to (N)" action that appears
+   once >=1 checkbox is picked. */
+.copyBar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 2px 0 8px; }
+.copyChk { width: auto; margin: 0; flex: none; }
+#copyToDate { width: 100%; margin: 8px 0; }
 
 /* Backup & transfer textareas (Task 1) */
 .ioBox {

@@ -65,6 +65,10 @@
         <h2 id="dayHeading">Today's projects</h2>
         <span id="dayTotal" class="mono dayTotalVal">00:00</span>
       </div>
+      <div class="copyBar">
+        <button id="copyModeBtn" class="link">Copy Tasks</button>
+        <button id="copyToBtn" class="link hidden">Copy to (0)</button>
+      </div>
       <div id="entries" class="entries"></div>
       <p id="emptyMsg" class="muted small">No projects yet.</p>
 
@@ -87,6 +91,19 @@
       <div class="confirmActions">
         <button id="confirmNo" class="btn">Cancel</button>
         <button id="confirmYes" class="btn danger">Yes, submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Copy Tasks: pick a target day for the selected entries (Requirement 1) -->
+  <div id="copyToOverlay" class="overlay hidden">
+    <div class="confirmBox">
+      <p>Copy selected task(s) to:</p>
+      <input id="copyToDate" type="date">
+      <p id="copyToStatus" class="status"></p>
+      <div class="confirmActions">
+        <button id="copyToCancel" class="btn">Cancel</button>
+        <button id="copyToConfirm" class="btn primary">Confirm copy</button>
       </div>
     </div>
   </div>

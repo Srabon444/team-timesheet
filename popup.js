@@ -53,6 +53,10 @@ let tick = null;
 // any past day reads/writes S.history[viewDate] so you can back-fill entries
 // the same way the desktop app lets you (Task 4b).
 let viewDate = null;
+// Copy Tasks (Req 1): copyMode toggles the checkbox column; copySelected
+// tracks which entry ids (of the viewed day) are picked for copying.
+let copyMode = false;
+let copySelected = new Set();
 
 // ---------- utils ----------
 const $ = (id) => document.getElementById(id);
@@ -278,6 +282,8 @@ function setViewDate(dateStr) {
   if (!dateStr || dateStr > S.date) dateStr = S.date; // never past the live day
   viewDate = dateStr;
   clearDraft(); // drop any in-progress edit when changing days
+  copyMode = false; // selection was scoped to the day we're leaving
+  copySelected.clear();
   updateDayNav();
   render();
 }
@@ -422,6 +428,7 @@ function render() {
   const totalEl = $("dayTotal");
   if (totalEl) totalEl.textContent = secToHHMM(viewTotalSec());
   updateSubmittedUI();
+  updateCopyBar();
   for (const e of list) {
     const active = todayView && S.timer.activeId === e.id;
     const div = document.createElement("div");
@@ -429,6 +436,7 @@ function render() {
     div.innerHTML = `
       <div class="row1">
         <div>
+          ${copyMode ? `<input type="checkbox" class="copyChk" ${copySelected.has(e.id) ? "checked" : ""}>` : ""}
           <span class="statusDot"></span>
           <span class="pname"></span>
           <span class="cat"></span>
@@ -445,6 +453,7 @@ function render() {
         <input class="time" type="text" value="${secToHHMM(elapsedSec(e))}">
         <span class="live">${active ? secToHHMMSS(elapsedSec(e)) : ""}</span>
       </div>`;
+    if (copyMode) div.querySelector(".copyChk").onchange = (ev) => toggleCopySelect(e.id, ev.target.checked);
     div.querySelector(".statusDot").style.background = active ? "var(--success)" : "var(--text-muted)";
     const pnameEl = div.querySelector(".pname");
     pnameEl.textContent = e.project;
@@ -479,6 +488,65 @@ async function deleteEntry(id) {
   await persistCurrent();
   render();
 }
+// ---------- Copy Tasks (Req 1) ----------
+function toggleCopyMode() {
+  copyMode = !copyMode;
+  if (!copyMode) copySelected.clear();
+  render();
+}
+function toggleCopySelect(id, checked) {
+  if (checked) copySelected.add(id);
+  else copySelected.delete(id);
+  updateCopyBar();
+}
+function updateCopyBar() {
+  const modeBtn = $("copyModeBtn");
+  if (modeBtn) modeBtn.textContent = copyMode ? "Cancel" : "Copy Tasks";
+  const toBtn = $("copyToBtn");
+  if (toBtn) {
+    toBtn.classList.toggle("hidden", !copyMode || copySelected.size === 0);
+    toBtn.textContent = `Copy to (${copySelected.size})`;
+  }
+}
+function openCopyToDialog() {
+  if (!copySelected.size) return;
+  const inp = $("copyToDate");
+  inp.min = S.date;
+  inp.value = S.date;
+  $("copyToStatus").textContent = "";
+  $("copyToOverlay").classList.remove("hidden");
+}
+// Copies are always fresh: new id, accSec reset to 0, no submitted flag —
+// same shape submitDraft() already pushes for a brand-new entry.
+async function confirmCopyTo() {
+  const target = $("copyToDate").value;
+  const st = $("copyToStatus");
+  // Mirror the native <input min> guard — it's the only affordance stopping
+  // a past date, so re-check here rather than trust it unconditionally.
+  if (!target || target < S.date) {
+    st.className = "status err";
+    st.textContent = "Pick today or a future date.";
+    return;
+  }
+  const toCopy = currentEntries().filter((e) => copySelected.has(e.id));
+  if (!toCopy.length) return;
+  const clones = toCopy.map((e) => ({
+    id: crypto.randomUUID(), project: e.project, category: e.category, description: e.description, accSec: 0,
+  }));
+  if (target === S.date) {
+    S.entries.push(...clones);
+    await chrome.storage.local.set({ entries: S.entries });
+  } else {
+    if (!S.history[target]) S.history[target] = [];
+    S.history[target].push(...clones);
+    await chrome.storage.local.set({ history: S.history });
+  }
+  $("copyToOverlay").classList.add("hidden");
+  copyMode = false;
+  copySelected.clear();
+  render();
+}
+
 // live-update the running entry's time field (skip if user is editing it)
 function startTick() {
   if (tick) clearInterval(tick);
@@ -694,21 +762,22 @@ async function finalSubmit() {
     st.textContent = "All projects here already submitted. Add a new one to submit more.";
     return;
   }
+  // Check raw elapsed seconds, not the minute-rounded hh:mm display — a
+  // 30-59s entry rounds UP to "00:01" and would otherwise slip past.
+  const under1min = pending.filter((e) => elapsedSec(e) < 60);
+  if (under1min.length) {
+    st.className = "status err";
+    st.textContent = `${under1min.length} project(s) have under 1 minute tracked — set a real time before submitting.`;
+    return;
+  }
   const payload = pending.map((e) => ({
     project: e.project,
     category: e.category,
     description: e.description,
     hhmm: secToHHMM(elapsedSec(e)),
   }));
-  if (payload.every((e) => hhmmToSec(e.hhmm) === 0)) {
-    st.className = "status err";
-    st.textContent = "All projects are 00:00 — set a time first.";
-    return;
-  }
-  const zeros = payload.filter((e) => hhmmToSec(e.hhmm) === 0).length;
   const msg = `Submit ${payload.length} project(s) to the timesheet form?` +
-    (zeros ? `\n${zeros} have 00:00 time.` : "") +
-    (isTodayView() ? "" : `\nThese are for ${viewDate} — set the form's Date field to ${viewDate} before its final Submit.`) +
+    (isTodayView() ? "" : `\nThese are for ${viewDate}.`) +
     `\n\nThis fills entries only — it will NOT click the form's final Submit.`;
   if (!(await showConfirm(msg))) return;
 
@@ -716,7 +785,7 @@ async function finalSubmit() {
   try {
     const tabId = await ensureFormTab();
     st.textContent = "Filling entries…";
-    const out = await fillFormOnPage(tabId, payload, S.name);
+    const out = await fillFormOnPage(tabId, payload, S.name, viewDate);
     // fillFormOnPage processes `pending` in order and stops at the first
     // failure, so the first `added` of them are the ones that succeeded.
     const addedCount = out ? out.added : 0;
@@ -897,6 +966,31 @@ function pageSelectName(name) {
   });
 }
 
+// dateStr: "YYYY-MM-DD" -> the field displays/accepts DD/MM/YYYY. Confirmed
+// live against the real form: the Date widget's own input has
+// role=combobox + aria-label="Date" (same react-datepicker pattern as Name's
+// react-select, just not a dropdown) — typing the display value + a
+// synthetic Enter sets it, same technique as pageSelectName.
+function pageSelectDate(dateStr) {
+  const [y, m, d] = dateStr.split("-");
+  const ddmmyyyy = `${d}/${m}/${y}`;
+  const setNative = (el, val) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, val);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const input = document.querySelector('input[aria-label="Date"]');
+  if (!input) return { error: "Date field not found" };
+  if (input.value === ddmmyyyy) return { skipped: true };
+  input.focus();
+  setNative(input, ddmmyyyy);
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve(input.value === ddmmyyyy ? { ok: true } : { error: `could not set date to "${ddmmyyyy}"` });
+    }, 300);
+  });
+}
+
 function pageClickCreate() {
   const fire = (el, type) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
   const el = [...document.querySelectorAll("button,[role=button],a,div,span")]
@@ -1009,11 +1103,14 @@ async function waitForEntryVisible(tabId, description, timeout = 10000) {
   }
   return false;
 }
-async function fillFormOnPage(tabId, entries, name) {
+async function fillFormOnPage(tabId, entries, name, date) {
   let added = 0;
   try {
     const [nameRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageSelectName, args: [name] });
     if (nameRes.result && nameRes.result.error) throw new Error(nameRes.result.error);
+
+    const [dateRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageSelectDate, args: [date] });
+    if (dateRes.result && dateRes.result.error) throw new Error(dateRes.result.error);
 
     for (const e of entries) {
       const [createRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageClickCreate });
@@ -1057,6 +1154,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if ($("todayBtn")) $("todayBtn").onclick = () => setViewDate(S.date);
   if ($("viewDateInput")) $("viewDateInput").onchange = (e) => setViewDate(e.target.value);
   $("finalSubmit").onclick = finalSubmit;
+  if ($("copyModeBtn")) $("copyModeBtn").onclick = toggleCopyMode;
+  if ($("copyToBtn")) $("copyToBtn").onclick = openCopyToDialog;
+  if ($("copyToCancel")) $("copyToCancel").onclick = () => $("copyToOverlay").classList.add("hidden");
+  if ($("copyToConfirm")) $("copyToConfirm").onclick = confirmCopyTo;
   if ($("markSubmitBtn")) $("markSubmitBtn").onclick = () =>
     daySubmitted(viewDate) ? unmarkDaySubmitted(viewDate) : markDaySubmitted(viewDate, "manual");
   // Reflect an auto-mark written by the form-tab watcher while the popup is open.

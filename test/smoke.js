@@ -195,6 +195,14 @@ async function harness1() {
   await sleep(20);
   A(store.entries[0].accSec === 9000, "manual time edit -> 2:30 = 9000s");
 
+  // Entry B needs >=1 minute too, or the under-1-minute submit block (Req 2,
+  // tested below on the third entry) would trip on it here instead.
+  const timeInpB = win.document.querySelectorAll(".entry")[1].querySelector(".time");
+  timeInpB.value = "00:01"; // exactly 1 minute -> at the block's boundary, not under it
+  timeInpB.dispatchEvent(new win.Event("change"));
+  await sleep(20);
+  A(store.entries[1].accSec === 60, "manual time edit -> 0:01 = 60s");
+
   // custom in-popup confirm modal (not native window.confirm — that renders
   // cropped/unusable inside a small extension popup)
   lastFill = null;
@@ -217,7 +225,7 @@ async function harness1() {
   $("confirmYes").click();
   await sleep(300);
   A(Array.isArray(lastFill) && lastFill.length === 2, "final submit sends 2 entries");
-  A(lastFill[0].hhmm === "02:30" && lastFill[1].hhmm === "00:00", "payload carries hh:mm per entry");
+  A(lastFill[0].hhmm === "02:30" && lastFill[1].hhmm === "00:01", "payload carries hh:mm per entry");
   A($("submitStatus").textContent.toLowerCase().includes("added"), "success status shown");
   A($("confirmOverlay").classList.contains("hidden"), "modal hides after Yes");
   // regression guard: user reported cold-start failures fixed by manually
@@ -249,11 +257,21 @@ async function harness1() {
   $("descInput").value = "Third task";
   $("addProject").click();
   await sleep(20);
-  const entryTimes = win.document.querySelectorAll(".entry .time");
-  const thirdTimeInp = entryTimes[entryTimes.length - 1];
-  thirdTimeInp.value = "00:45";
-  thirdTimeInp.dispatchEvent(new win.Event("change"));
+  // Req 2: Final Submit hard-blocks while ANY pending entry is under 1
+  // minute of RAW elapsed time. That's only reachable via a timer stopped
+  // after a few real seconds — the hh:mm field's finest granularity is 1
+  // minute, so a manually-typed time can never land under 60s. Poke the raw
+  // accSec directly (same shape a barely-run timer would leave behind).
+  const thirdEntry = win.S.entries.find((e) => e.description === "Third task");
+  thirdEntry.accSec = 30; // rounds UP to "00:01" in hh:mm display -> must still block
+  lastFill = null;
+  $("finalSubmit").click();
   await sleep(20);
+  A($("confirmOverlay").classList.contains("hidden"), "a sub-minute entry blocks Final Submit even though it rounds up to 00:01 on screen");
+  A($("submitStatus").textContent.includes("under 1 minute"), "status explains the under-1-minute block");
+  A(lastFill === null, "blocked submit never calls fillFormOnPage");
+
+  thirdEntry.accSec = 90; // fix it -> at least 1 minute, unblocks submit
   lastFill = null;
   fillFormReturn = { added: 1 };
   $("finalSubmit").click();
@@ -261,7 +279,7 @@ async function harness1() {
   A($("confirmMsg").textContent.includes("Submit 1 project"), "confirm modal counts only the new pending entry, not the already-submitted ones");
   $("confirmYes").click();
   await sleep(300);
-  A(Array.isArray(lastFill) && lastFill.length === 1 && lastFill[0].description === "Third task", "second Final Submit re-sends only the NEW entry — no duplicates of the first two");
+  A(Array.isArray(lastFill) && lastFill.length === 1 && lastFill[0].description === "Third task" && lastFill[0].hhmm === "00:02", "second Final Submit re-sends only the NEW entry — no duplicates of the first two");
   A(reloadCount === 1, `ensureFormTab reloads a reused tab too, every time (got ${reloadCount})`);
   queryReturnsExisting = false;
 
@@ -404,6 +422,78 @@ async function harness1() {
   A($("confirmOverlay").classList.contains("hidden"), "delete with confirmBeforeDelete off skips the modal");
   A(store.entries.length === beforeCount2 - 1, "entry deleted immediately when confirmBeforeDelete is off");
 
+  // COPY TASKS (Req 1): checkbox select -> "Copy to (N)" -> date-picker
+  // overlay (min = today) -> confirm copies fresh clones (accSec:0, no
+  // submitted flag) into the target day. Seed one entry on today's (now
+  // rolled-over) live day, since the prior delete tests left it empty.
+  $("projSelect").value = "ZuPOS";
+  $("catSelect").value = "Development";
+  $("descInput").value = "Copy Tasks source";
+  $("timeInput").value = "01:00";
+  $("addProject").click();
+  await sleep(20);
+  A(win.document.querySelector(".entry .copyChk") === null, "no checkboxes rendered outside Copy Tasks mode");
+  $("copyModeBtn").click();
+  await sleep(10);
+  A(win.document.querySelector(".entry .copyChk") !== null, "checkbox column appears once Copy Tasks mode is on");
+  A($("copyModeBtn").textContent === "Cancel", "Copy Tasks button becomes Cancel while active");
+  A($("copyToBtn").classList.contains("hidden"), "Copy to button stays hidden with nothing selected yet");
+
+  const copySrcId = store.entries[0].id;
+  const copySrcEntry = { ...store.entries[0] };
+  const firstChk = win.document.querySelector(".entry .copyChk");
+  firstChk.checked = true;
+  firstChk.dispatchEvent(new win.Event("change"));
+  await sleep(10);
+  A(!$("copyToBtn").classList.contains("hidden"), "Copy to button appears once >=1 entry is selected");
+  A($("copyToBtn").textContent === "Copy to (1)", "Copy to button shows the selection count");
+
+  $("copyToBtn").click();
+  await sleep(10);
+  A(!$("copyToOverlay").classList.contains("hidden"), "Copy to opens the date-picker overlay");
+  A($("copyToDate").min === store.date, "date picker's min is today — past dates disabled");
+
+  // Reject a past date even though the native min= already should have —
+  // mirrors the FE guard in the handler itself, not just the input attribute.
+  $("copyToDate").value = "2000-01-01";
+  $("copyToConfirm").click();
+  await sleep(10);
+  A(!$("copyToOverlay").classList.contains("hidden"), "a past target date is rejected — overlay stays open");
+  A($("copyToStatus").textContent.toLowerCase().includes("future"), "status explains the past-date rejection");
+
+  const futureDate = "2099-06-15"; // safely in the future for any test run
+  const historyCountBefore = Object.keys(store.history || {}).length;
+  $("copyToDate").value = futureDate;
+  $("copyToConfirm").click();
+  await sleep(20);
+  A($("copyToOverlay").classList.contains("hidden"), "overlay closes after a valid copy");
+  A($("copyModeBtn").textContent === "Copy Tasks", "Copy Tasks mode exits automatically after a successful copy");
+  A(win.document.querySelector(".entry .copyChk") === null, "checkbox column is gone after exiting Copy Tasks mode");
+  A(Object.keys(store.history).length === historyCountBefore + 1, "copying to a future date creates that day's history entry");
+  A(store.history[futureDate] && store.history[futureDate].length === 1, "exactly one clone landed on the future day");
+  const clone = store.history[futureDate][0];
+  A(clone.id !== copySrcId, "the clone gets a fresh id, not the source entry's id");
+  A(clone.project === copySrcEntry.project && clone.category === copySrcEntry.category && clone.description === copySrcEntry.description,
+    "clone carries over project/category/description");
+  A(clone.accSec === 0, "clone's time is reset to 0, not copied from the source");
+  A(!clone.submitted, "clone is not marked submitted");
+
+  // Copying to TODAY (the default date the picker opens with) appends
+  // straight into S.entries instead of S.history.
+  $("copyModeBtn").click();
+  await sleep(10);
+  win.document.querySelector(".entry .copyChk").checked = true;
+  win.document.querySelector(".entry .copyChk").dispatchEvent(new win.Event("change"));
+  await sleep(10);
+  const entriesCountBefore = store.entries.length;
+  $("copyToBtn").click();
+  await sleep(10);
+  A($("copyToDate").value === store.date, "date picker defaults to today");
+  $("copyToConfirm").click();
+  await sleep(20);
+  A(store.entries.length === entriesCountBefore + 1, "copying to today appends into today's live entries, not history");
+  A(store.entries[store.entries.length - 1].accSec === 0, "today-copy clone also resets to 0");
+
   // THEME: resolveTheme + applyTheme + data-theme attribute reflects on load
   A(win.resolveTheme("dark") === "dark" && win.resolveTheme("light") === "light", "resolveTheme passes through explicit dark/light");
   A(win.resolveTheme("system") === "dark" || win.resolveTheme("system") === "light", "resolveTheme resolves system to a concrete value");
@@ -521,9 +611,16 @@ async function harness2() {
     return d.window;
   }
 
-  // top-page mock: Name react-select + Create + a decoy main-form Submit
-  // that must NEVER be clicked by the automation.
+  // top-page mock: Name react-select + Date field + Create + a decoy
+  // main-form Submit that must NEVER be clicked by the automation.
   topWin.document.body.appendChild(buildReactSelectControl(topWin.document, "Name"));
+  // Date field: confirmed live against the real form it LOOKS like a
+  // react-select (accessible role=combobox) but is actually a plain typed
+  // input identified by aria-label="Date", not wrapped in .react-select__control.
+  const dateInput = topWin.document.createElement("input");
+  dateInput.setAttribute("aria-label", "Date");
+  dateInput.value = "12/08/2026"; // defaults to "today" until the automation sets it
+  topWin.document.body.appendChild(dateInput);
   const create = topWin.document.createElement("div");
   create.textContent = "Create";
   create.addEventListener("click", () => { createClicks++; subWin = buildSubWindow(); });
@@ -578,10 +675,11 @@ async function harness2() {
     { project: "VSB", category: "Code Review", description: "task two", hhmm: "01:15" },
   ];
   const raceStart = Date.now();
-  const r = await shell.fillFormOnPage(1, entries, "Debjit Paul");
+  const r = await shell.fillFormOnPage(1, entries, "Debjit Paul", "2026-07-20");
   const raceElapsed = Date.now() - raceStart;
   if (r && r.error) console.log("  [debug] fillFormOnPage result:", JSON.stringify(r));
   A(r && r.added === 2 && !r.error, "fillFormOnPage added 2 entries without error");
+  A(dateInput.value === "20/07/2026", "fillFormOnPage sets the Date field to the target day (DD/MM/YYYY), not left on today");
   // regression guard for the reported "worked once, then Create silently did
   // nothing on retry" bug: confirmed live that Fillout's entries list does an
   // async refresh after the modal closes, so fillFormOnPage must wait for
@@ -604,6 +702,11 @@ async function harness2() {
     target: { tabId: 1 }, func: shell.pageSelectName, args: ["Debjit Paul"],
   });
   A(skipRes.result && skipRes.result.skipped === true, "pageSelectName skips reselecting an already-correct name");
+
+  const [dateSkipRes] = await chrome.scripting.executeScript({
+    target: { tabId: 1 }, func: shell.pageSelectDate, args: ["2026-07-20"],
+  });
+  A(dateSkipRes.result && dateSkipRes.result.skipped === true, "pageSelectDate skips re-setting an already-correct date");
 
   topDom.window.close();
   shellDom.window.close();
