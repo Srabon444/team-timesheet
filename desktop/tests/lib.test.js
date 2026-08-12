@@ -231,25 +231,30 @@ describe("colors", () => {
 });
 
 describe("buildFillScript", () => {
-  it("produces a self-contained IIFE embedding the payload", () => {
+  it("produces a self-contained IIFE embedding the payload and date", () => {
     const script = buildFillScript(
       [{ id: "x1", project: "ZuPOS", category: "Development", description: "task", hhmm: "01:30" }],
-      "Md Ashraful Islam"
+      "Md Ashraful Islam",
+      "2026-08-10"
     );
     expect(script).toContain('"ZuPOS"');
     expect(script).toContain('"Md Ashraful Islam"');
+    expect(script).toContain('"2026-08-10"');
     expect(script).toContain("TT_STATE:");
     expect(script).toContain("contentDocument");
     // untrusted-event automation essentials survived stringification
     expect(script).toContain("react-select__placeholder");
     expect(script).toContain("HTMLInputElement.prototype");
+    // the Date-field fix: the runner sets it via aria-label, not left on today
+    expect(script).toContain('aria-label="Date"');
     // must be syntactically valid JS
     expect(() => new Function(script)).not.toThrow();
   });
   it("escapes hostile strings safely via JSON", () => {
     const script = buildFillScript(
       [{ id: "x", project: "ZuPOS", category: "Development", description: 'a"b</script>\\n', hhmm: "00:01" }],
-      'name"quote'
+      'name"quote',
+      "2026-08-10"
     );
     expect(() => new Function(script)).not.toThrow();
   });
