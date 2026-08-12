@@ -17,7 +17,7 @@
 //    title, which the Rust side polls and relays to the main window. A keep
 //    interval re-asserts the title so the page's own title updates can't
 //    swallow a report between polls.
-async function runner(entries, name) {
+async function runner(entries, name, date) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const report = (s) => {
     try {
@@ -173,6 +173,25 @@ async function runner(entries, name) {
     if (!already) await selectReact(document, window, "Name", name);
     report({ phase: "name-selected", added });
 
+    // Date: looks like a react-select (role=combobox) but is actually a
+    // plain typed input identified by aria-label="Date" — confirmed live
+    // against the real form. Ported from the extension's pageSelectDate,
+    // the fix for Final Submit opening/staying on today instead of the
+    // day being filled.
+    const [dy, dm, dd] = date.split("-");
+    const ddmmyyyy = `${dd}/${dm}/${dy}`;
+    const dateInput = document.querySelector('input[aria-label="Date"]');
+    if (!dateInput) return fail("Date field not found");
+    if (dateInput.value !== ddmmyyyy) {
+      dateInput.focus();
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(dateInput, ddmmyyyy);
+      dateInput.dispatchEvent(new Event("input", { bubbles: true }));
+      dateInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      await sleep(300);
+      if (dateInput.value !== ddmmyyyy) return fail(`could not set date to "${ddmmyyyy}"`);
+    }
+    report({ phase: "date-selected", added });
+
     report({ phase: "clearing-entries", added });
     const clearResult = await clearExistingEntries();
     const clearWarning =
@@ -295,7 +314,7 @@ async function runner(entries, name) {
   }
 }
 
-// entries: [{ id, project, category, description, hhmm }]
-export function buildFillScript(entries, name) {
-  return `(${runner.toString()})(${JSON.stringify(entries)}, ${JSON.stringify(name)});`;
+// entries: [{ id, project, category, description, hhmm }]. date: "YYYY-MM-DD".
+export function buildFillScript(entries, name, date) {
+  return `(${runner.toString()})(${JSON.stringify(entries)}, ${JSON.stringify(name)}, ${JSON.stringify(date)});`;
 }
