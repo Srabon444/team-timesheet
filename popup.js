@@ -81,7 +81,20 @@ function currentEntries() {
 }
 async function persistCurrent() {
   if (isTodayView()) await chrome.storage.local.set({ entries: S.entries, timer: S.timer });
-  else await chrome.storage.local.set({ history: S.history });
+  else await patchHistoryDay(viewDate, S.history[viewDate] || []);
+}
+// Merge-write a single history day against whatever is CURRENTLY in storage,
+// instead of blindly replacing the whole `history` object. tab.html runs a
+// second, independent copy of this script that never re-syncs its in-memory
+// S after the initial load — if that copy is left open across a day
+// rollover and later writes `history` from its now-stale S, a full replace
+// would silently erase the day another context (e.g. the popup) just
+// archived. Re-reading storage right before writing keeps every OTHER day
+// intact no matter how stale this context's own S.history is.
+async function patchHistoryDay(date, list) {
+  const stored = (await chrome.storage.local.get(null)).history; // get(null) — matches every other read in this file
+  S.history = { ...(stored || {}), [date]: list };
+  await chrome.storage.local.set({ history: S.history });
 }
 function secToHHMM(sec) {
   let m = Math.round(sec / 60);
@@ -133,13 +146,16 @@ async function init() {
     // very first run ever (no S.date yet) so we don't write a bogus entry.
     if (S.date && S.entries.length) {
       foldActive(); // fold any running timer into accSec before archiving
-      S.history[S.date] = S.entries;
+      await patchHistoryDay(S.date, S.entries); // merge — never blind-replace history
     }
     // daily reset: clear projects + timer + draft, keep name/names/lastCategory
     S.entries = [];
     S.timer = { activeId: null, startedAt: null };
     S.draft = null;
     S.date = today;
+    // history already merge-written above when there was something to archive;
+    // this re-write is a no-op then, and on a true first-ever run it just
+    // ensures the key exists as {} rather than being absent from storage.
     await chrome.storage.local.set({ history: S.history, entries: [], timer: S.timer, draft: null, date: today });
   }
   document.documentElement.dataset.theme = resolveTheme(S.theme);
@@ -148,6 +164,9 @@ async function init() {
   // A real conflict (both sides changed) resolves automatically to whichever
   // side was edited more recently — see gdSync.
   if (typeof gdSync === "function") gdSync(false).catch(() => {});
+  // Keep Project/Category in sync with the live form on every open instead of
+  // requiring a manual Settings click — same silent-refresh idea as gdSync above.
+  loadProjectsAndCategories(true).catch(() => {});
 }
 
 // ---------- timer engine (one active at a time) ----------
@@ -539,9 +558,8 @@ async function confirmCopyTo() {
     S.entries.push(...clones);
     await chrome.storage.local.set({ entries: S.entries });
   } else {
-    if (!S.history[target]) S.history[target] = [];
-    S.history[target].push(...clones);
-    await chrome.storage.local.set({ history: S.history });
+    const list = [...(S.history[target] || []), ...clones];
+    await patchHistoryDay(target, list);
   }
   $("copyToOverlay").classList.add("hidden");
   copyMode = false;
@@ -658,29 +676,28 @@ async function loadNames() {
     st.textContent = "Error: " + err.message;
   }
 }
-async function loadProjectsAndCategories() {
-  const st = $("pcStatus");
-  if (!st) return;
-  st.className = "status";
-  st.textContent = "Loading projects & categories…";
+// silent=true (init()'s background auto-refresh) skips all status-element
+// writes instead of requiring pcStatus to exist — Settings' own button click
+// still passes silent=false for its usual visible feedback.
+async function loadProjectsAndCategories(silent) {
+  const st = silent ? null : $("pcStatus");
+  if (!silent && !st) return;
+  if (st) { st.className = "status"; st.textContent = "Loading projects & categories…"; }
   try {
     const res = await fetch(SUBFORM_URL, { credentials: "omit" });
     const html = await res.text();
     const projects = parseDropdownOptions(html, "Project");
     const categories = parseDropdownOptions(html, "Work Category");
     if (!projects.length && !categories.length) {
-      st.className = "status err";
-      st.textContent = "Could not read projects/categories from form.";
+      if (st) { st.className = "status err"; st.textContent = "Could not read projects/categories from form."; }
       return;
     }
     if (projects.length) { S.projects = projects; await chrome.storage.local.set({ projects }); }
     if (categories.length) { S.categories = categories; await chrome.storage.local.set({ categories }); }
     if ($("catSelect")) fillSelect($("catSelect"), currentCategories());
-    st.className = "status ok";
-    st.textContent = `Loaded ${projects.length} projects, ${categories.length} categories.`;
+    if (st) { st.className = "status ok"; st.textContent = `Loaded ${projects.length} projects, ${categories.length} categories.`; }
   } catch (err) {
-    st.className = "status err";
-    st.textContent = "Error: " + err.message;
+    if (st) { st.className = "status err"; st.textContent = "Error: " + err.message; }
   }
 }
 async function saveName() {
@@ -757,39 +774,43 @@ async function finalSubmit() {
     st.textContent = "No projects to submit.";
     return;
   }
-  if (isTodayView()) foldActive();
-  await persistCurrent();
-  render();
-  // Only re-submit entries that haven't gone through yet — otherwise a
-  // second Final Submit click (e.g. after adding one more project) would
-  // re-add every already-submitted entry a second time in the real form.
-  const pending = list.filter((e) => !e.submitted);
-  if (!pending.length) {
-    st.className = "status err";
-    st.textContent = "All projects here already submitted. Add a new one to submit more.";
-    return;
-  }
-  // Check raw elapsed seconds, not the minute-rounded hh:mm display — a
-  // 30-59s entry rounds UP to "00:01" and would otherwise slip past.
-  const under1min = pending.filter((e) => elapsedSec(e) < 60);
-  if (under1min.length) {
-    st.className = "status err";
-    st.textContent = `${under1min.length} project(s) have under 1 minute tracked — set a real time before submitting.`;
-    return;
-  }
-  const payload = pending.map((e) => ({
-    project: e.project,
-    category: e.category,
-    description: e.description,
-    hhmm: secToHHMM(elapsedSec(e)),
-  }));
-  const msg = `Submit ${payload.length} project(s) to the timesheet form?` +
-    (isTodayView() ? "" : `\nThese are for ${viewDate}.`) +
-    `\n\nThis fills entries only — it will NOT click the form's final Submit.`;
-  if (!(await showConfirm(msg))) return;
-
-  st.textContent = "Opening form…";
+  // Whole flow wrapped in one try/catch — persistCurrent() below writes to
+  // chrome.storage.local, which can throw (e.g. quota exceeded after months
+  // of accumulated history); left unguarded that used to die as an unhandled
+  // rejection with no status message, looking like the extension crashed.
   try {
+    if (isTodayView()) foldActive();
+    await persistCurrent();
+    render();
+    // Only re-submit entries that haven't gone through yet — otherwise a
+    // second Final Submit click (e.g. after adding one more project) would
+    // re-add every already-submitted entry a second time in the real form.
+    const pending = list.filter((e) => !e.submitted);
+    if (!pending.length) {
+      st.className = "status err";
+      st.textContent = "All projects here already submitted. Add a new one to submit more.";
+      return;
+    }
+    // Check raw elapsed seconds, not the minute-rounded hh:mm display — a
+    // 30-59s entry rounds UP to "00:01" and would otherwise slip past.
+    const under1min = pending.filter((e) => elapsedSec(e) < 60);
+    if (under1min.length) {
+      st.className = "status err";
+      st.textContent = `${under1min.length} project(s) have under 1 minute tracked — set a real time before submitting.`;
+      return;
+    }
+    const payload = pending.map((e) => ({
+      project: e.project,
+      category: e.category,
+      description: e.description,
+      hhmm: secToHHMM(elapsedSec(e)),
+    }));
+    const msg = `Submit ${payload.length} project(s) to the timesheet form?` +
+      (isTodayView() ? "" : `\nThese are for ${viewDate}.`) +
+      `\n\nThis fills entries only — it will NOT click the form's final Submit.`;
+    if (!(await showConfirm(msg))) return;
+
+    st.textContent = "Opening form…";
     const tabId = await ensureFormTab();
     st.textContent = "Filling entries…";
     const out = await fillFormOnPage(tabId, payload, S.name, viewDate);
@@ -1146,7 +1167,7 @@ async function fillFormOnPage(tabId, entries, name, date) {
 // ---------- wiring ----------
 document.addEventListener("DOMContentLoaded", () => {
   $("loadNames").onclick = loadNames;
-  if ($("loadProjects")) $("loadProjects").onclick = loadProjectsAndCategories;
+  if ($("loadProjects")) $("loadProjects").onclick = () => loadProjectsAndCategories(false);
   $("saveName").onclick = saveName;
   if ($("openFullView")) $("openFullView").onclick = openFullView;
   $("changeName").onclick = showSetup;

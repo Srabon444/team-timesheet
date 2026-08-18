@@ -5,6 +5,7 @@
   "description": "Track per-project time with timers, then auto-fill the Techzu Fillout daily timesheet form.",
   "permissions": [
     "storage",
+    "unlimitedStorage",
     "scripting",
     "tabs",
     "alarms",

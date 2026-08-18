@@ -1159,6 +1159,51 @@ async function harness7() {
   A(m.days["2026-07-20"][0].description === "local edit", "same-id collision deterministically prefers local");
 }
 
+// Regression test for the "previous day's entries vanish" bug: tab.html
+// keeps its own long-lived copy of popup.js's S — if it's ever left open
+// across a day rollover, its in-memory S.history goes stale (it never
+// re-runs init()). Before patchHistoryDay(), any write from that stale
+// context did `chrome.storage.local.set({ history: S.history })` — a blind
+// full-object replace — silently erasing whatever another context (e.g. a
+// fresh popup) had just archived. This proves the merge-on-write fix holds.
+async function harness8() {
+  console.log("\n== Harness 8: history merge-on-write (stale second context) ==");
+  const store = {}; // shared backing store simulating the one real chrome.storage.local
+  const chromeMock = {
+    storage: { local: {
+      get: async (k) => (k === null ? { ...store } : {}),
+      set: async (obj) => { Object.assign(store, obj); },
+    } },
+  };
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  dom.window.chrome = chromeMock;
+  dom.window.crypto = { randomUUID: () => "id-x" };
+  // jsdom fires its own real DOMContentLoaded asynchronously — racing it
+  // against direct calls below would let init() run concurrently and stomp
+  // the store. Neuter the listener registration so popup.js's wiring
+  // (init()/route()) never fires; only patchHistoryDay itself is under test.
+  dom.window.document.addEventListener = () => {};
+  const s = dom.window.document.createElement("script");
+  s.textContent = jsSrc;
+  dom.window.document.body.appendChild(s);
+  const win = dom.window;
+
+  // "Context A" (e.g. a fresh popup) archives day X.
+  win.S.history = {};
+  await win.patchHistoryDay("2026-08-10", [{ id: "e1", description: "day X entry" }]);
+  A(store.history["2026-08-10"].length === 1, "context A's archive lands in storage");
+
+  // "Context B" is stale — its in-memory S.history predates day X entirely,
+  // same shape a long-open tab.html tab would have — then writes day Y.
+  win.S.history = {};
+  await win.patchHistoryDay("2026-08-11", [{ id: "e2", description: "day Y entry" }]);
+  A(store.history["2026-08-10"] && store.history["2026-08-10"].length === 1,
+    "a stale second context writing a DIFFERENT day does not erase day X");
+  A(store.history["2026-08-11"] && store.history["2026-08-11"].length === 1,
+    "day Y is also present after the second context's write");
+  dom.window.close();
+}
+
 (async () => {
   await harness1();
   await harness2();
@@ -1167,6 +1212,7 @@ async function harness7() {
   await harness5();
   await harness6();
   await harness7();
+  await harness8();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();
