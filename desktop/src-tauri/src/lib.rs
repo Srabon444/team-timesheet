@@ -1,5 +1,6 @@
 mod gdrive;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -14,9 +15,20 @@ const FILLOUT_ORIGIN: &str = "https://techzu.fillout.com/";
 struct FilloutJob {
     script: String,
     injected: bool,
+    gen: u64,
 }
 
 struct FilloutState(Mutex<Option<FilloutJob>>);
+
+/// Bumped on every open_fillout() call. start_title_poll() checks this each
+/// loop iteration and exits as soon as it's superseded — otherwise repeated
+/// Final Submits within the same ~30min window each leave their OWN
+/// title-poll thread running concurrently (nothing ever cancelled the
+/// previous one), all hammering run_on_main_thread every 400ms. Observed as
+/// the app going unresponsive after a long session of normal use (several
+/// submits), only clearing on a full restart — restart is what silently
+/// killed all the orphaned threads.
+struct PollGeneration(AtomicU64);
 
 #[tauri::command]
 fn load_data(app: AppHandle) -> Result<String, String> {
@@ -98,9 +110,10 @@ fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), Strin
         return Err("refusing to open a non-Fillout URL".to_string());
     }
     let parsed: tauri::Url = url.parse().map_err(|e: url::ParseError| e.to_string())?;
+    let gen = app.state::<PollGeneration>().0.fetch_add(1, Ordering::SeqCst) + 1;
     {
         let state = app.state::<FilloutState>();
-        *state.0.lock().unwrap() = Some(FilloutJob { script, injected: false });
+        *state.0.lock().unwrap() = Some(FilloutJob { script, injected: false, gen });
     }
     if let Some(win) = app.get_webview_window("fillout") {
         let _ = win.show();
@@ -153,7 +166,7 @@ fn poll_fillout_title(app: &AppHandle) -> Poll {
         .unwrap_or(Poll::Gone)
 }
 
-fn start_title_poll(app: AppHandle) {
+fn start_title_poll(app: AppHandle, my_gen: u64) {
     std::thread::spawn(move || {
         // Last "added" count seen, so a window closed mid-fill can still
         // report an accurate count when it disappears.
@@ -164,6 +177,11 @@ fn start_title_poll(app: AppHandle) {
         // (Task 7), without leaving the thread spinning forever.
         for _ in 0..4500 {
             std::thread::sleep(std::time::Duration::from_millis(400));
+            // A newer Final Submit started its own poll — this one is stale,
+            // exit quietly instead of running alongside it (see PollGeneration).
+            if app.state::<PollGeneration>().0.load(Ordering::SeqCst) != my_gen {
+                break;
+            }
             match poll_fillout_title(&app) {
                 Poll::Gone => {
                     // Window closed (mid-fill or intentionally). Tell the main
@@ -208,10 +226,28 @@ fn start_title_poll(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // No live crash reports exist yet for the Windows 11 blank/unresponsive
+    // main-window reports — this at least captures a panic (if that's what's
+    // happening) to a fixed, no-AppHandle-needed path so the NEXT occurrence
+    // leaves real evidence instead of nothing.
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("{}\n{}\n", info, std::backtrace::Backtrace::force_capture());
+        let _ = std::fs::write(std::env::temp_dir().join("team-timesheet-crash.log"), msg);
+    }));
+    // additionalBrowserArgs / WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is
+    // Windows-only (WebView2 specific). Unconfirmed root cause for the Win11
+    // blank-screen/unresponsive report — no crash log or repro data to pin it
+    // down yet — but forcing software rendering is a well-known, reversible
+    // mitigation for exactly this class of WebView2 initial-paint bug on
+    // certain GPU/driver combos. Must be set before any WebView2 is created.
+    #[cfg(target_os = "windows")]
+    std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(FilloutState(Mutex::new(None)))
+        .manage(PollGeneration(AtomicU64::new(0)))
         .on_page_load(|webview, payload| {
             if webview.label() != "fillout" {
                 return;
@@ -230,6 +266,7 @@ pub fn run() {
                     job.injected = true;
                 }
                 let script = guard.as_ref().unwrap().script.clone();
+                let gen = guard.as_ref().unwrap().gen;
                 drop(guard);
                 // Do NOT eval() synchronously inside the page-load callback.
                 // On Windows 11's WebView2, calling ExecuteScript re-entrantly
@@ -243,7 +280,7 @@ pub fn run() {
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(80));
                     let _ = wv.eval(&script);
-                    start_title_poll(app);
+                    start_title_poll(app, gen);
                 });
             }
         })
