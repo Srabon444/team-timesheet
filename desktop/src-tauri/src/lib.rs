@@ -140,25 +140,53 @@ fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), Strin
         let state = app.state::<FilloutState>();
         *state.0.lock().unwrap() = Some(FilloutJob { script, injected: false, gen });
     }
-    if let Some(win) = app.get_webview_window("fillout") {
-        dbg_log("open_fillout: reusing existing window");
-        let _ = win.show();
-        let _ = win.set_focus();
-        // Re-navigating fires on_page_load again → the fresh job is injected.
-        win.navigate(parsed).map_err(|e| e.to_string())?;
-        dbg_log("open_fillout: navigate() returned");
-    } else {
-        dbg_log("open_fillout: building a new window");
-        WebviewWindowBuilder::new(&app, "fillout", WebviewUrl::External(parsed))
-            .title("Fillout — review, then click the form's own Submit")
-            .inner_size(1320.0, 880.0)
-            .min_inner_size(1000.0, 700.0)
-            .resizable(true)
-            .build()
-            .map_err(|e| e.to_string())?;
-        dbg_log("open_fillout: window built");
+    // ROOT CAUSE (confirmed via dbg_log — execution stopped dead right after
+    // "building a new window", never reaching "window built" or any
+    // on_page_load event): this is a plain (non-async) #[tauri::command], so
+    // Tauri runs it on a background pool thread, not the main thread.
+    // WebviewWindowBuilder::build()/WebviewWindow::navigate() then create/
+    // navigate WebView2 — which is thread-affine (COM STA) — from off the
+    // main thread. Windows 11's runtime hangs on that where Windows 10
+    // apparently tolerated it — the exact same root-cause class as the
+    // title()/eval() thread-affinity issues already worked around elsewhere
+    // in this file, just a call site those fixes missed. Marshal onto the
+    // main thread the same way poll_fillout_title() already does for title().
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app2 = app.clone();
+    let dispatched = app.run_on_main_thread(move || {
+        dbg_log("open_fillout: main thread running");
+        let result: Result<(), String> = (|| {
+            if let Some(win) = app2.get_webview_window("fillout") {
+                dbg_log("open_fillout: reusing existing window (main thread)");
+                let _ = win.show();
+                let _ = win.set_focus();
+                // Re-navigating fires on_page_load again → the fresh job is injected.
+                win.navigate(parsed).map_err(|e| e.to_string())?;
+                dbg_log("open_fillout: navigate() returned (main thread)");
+            } else {
+                dbg_log("open_fillout: building a new window (main thread)");
+                WebviewWindowBuilder::new(&app2, "fillout", WebviewUrl::External(parsed))
+                    .title("Fillout — review, then click the form's own Submit")
+                    .inner_size(1320.0, 880.0)
+                    .min_inner_size(1000.0, 700.0)
+                    .resizable(true)
+                    .build()
+                    .map_err(|e| e.to_string())?;
+                dbg_log("open_fillout: window built (main thread)");
+            }
+            Ok(())
+        })();
+        let _ = tx.send(result);
+    });
+    if dispatched.is_err() {
+        dbg_log("open_fillout: run_on_main_thread dispatch FAILED");
+        return Err("could not reach the app's main thread".to_string());
     }
-    Ok(())
+    rx.recv_timeout(std::time::Duration::from_secs(15))
+        .map_err(|_| {
+            dbg_log("open_fillout: main thread did NOT respond within 15s");
+            "timed out opening the Fillout window".to_string()
+        })?
 }
 
 /// The injected script cannot use Tauri IPC (remote origin), so it reports
