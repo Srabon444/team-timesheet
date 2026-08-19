@@ -140,40 +140,38 @@ fn open_fillout(app: AppHandle, url: String, script: String) -> Result<(), Strin
         let state = app.state::<FilloutState>();
         *state.0.lock().unwrap() = Some(FilloutJob { script, injected: false, gen });
     }
-    // ROOT CAUSE (confirmed via dbg_log — execution stopped dead right after
-    // "building a new window", never reaching "window built" or any
-    // on_page_load event): this is a plain (non-async) #[tauri::command], so
-    // Tauri runs it on a background pool thread, not the main thread.
-    // WebviewWindowBuilder::build()/WebviewWindow::navigate() then create/
-    // navigate WebView2 — which is thread-affine (COM STA) — from off the
-    // main thread. Windows 11's runtime hangs on that where Windows 10
-    // apparently tolerated it — the exact same root-cause class as the
-    // title()/eval() thread-affinity issues already worked around elsewhere
-    // in this file, just a call site those fixes missed. Marshal onto the
-    // main thread the same way poll_fillout_title() already does for title().
+    // ROOT CAUSE, round 2 (confirmed via dbg_log): marshaling build() onto
+    // the main thread (see the ROOT CAUSE comment this replaced) got further
+    // — "main thread running" DID appear this time — but still hung dead at
+    // "building a new window (main thread)". WebviewWindowBuilder::build()
+    // itself hangs on this Windows 11 machine even called correctly from the
+    // main thread, when invoked reactively from inside a command's
+    // run_on_main_thread dispatch (build() likely needs to pump further
+    // messages internally to finish WebView2's own async controller
+    // creation, which a foreign/nested dispatch trampoline can't service —
+    // same reentrancy family as the eval()-in-page-load-callback hang this
+    // file already works around).
+    //
+    // Fix: never call build() reactively at all. The "fillout" window is now
+    // pre-created hidden at startup (see .setup() below), the one place
+    // Tauri creates windows through its own normal, proven-safe startup path
+    // (same as "main"), and its close is intercepted to hide instead of
+    // destroy (see .on_window_event() below) so build() never needs to run
+    // again for the rest of the app's life. This command only shows/
+    // focuses/navigates the window that already exists.
+    let Some(win) = app.get_webview_window("fillout") else {
+        dbg_log("open_fillout: fillout window missing — was pre-creation skipped?");
+        return Err("fillout window was not pre-created — this is a bug".to_string());
+    };
     let (tx, rx) = std::sync::mpsc::channel();
-    let app2 = app.clone();
     let dispatched = app.run_on_main_thread(move || {
         dbg_log("open_fillout: main thread running");
         let result: Result<(), String> = (|| {
-            if let Some(win) = app2.get_webview_window("fillout") {
-                dbg_log("open_fillout: reusing existing window (main thread)");
-                let _ = win.show();
-                let _ = win.set_focus();
-                // Re-navigating fires on_page_load again → the fresh job is injected.
-                win.navigate(parsed).map_err(|e| e.to_string())?;
-                dbg_log("open_fillout: navigate() returned (main thread)");
-            } else {
-                dbg_log("open_fillout: building a new window (main thread)");
-                WebviewWindowBuilder::new(&app2, "fillout", WebviewUrl::External(parsed))
-                    .title("Fillout — review, then click the form's own Submit")
-                    .inner_size(1320.0, 880.0)
-                    .min_inner_size(1000.0, 700.0)
-                    .resizable(true)
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                dbg_log("open_fillout: window built (main thread)");
-            }
+            let _ = win.show();
+            let _ = win.set_focus();
+            // Re-navigating fires on_page_load again → the fresh job is injected.
+            win.navigate(parsed).map_err(|e| e.to_string())?;
+            dbg_log("open_fillout: navigate() returned (main thread)");
             Ok(())
         })();
         let _ = tx.send(result);
@@ -333,6 +331,39 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(FilloutState(Mutex::new(None)))
         .manage(PollGeneration(AtomicU64::new(0)))
+        .setup(|app| {
+            // Pre-create the "fillout" window hidden, here, on Tauri's own
+            // normal startup path (the same one that creates "main" without
+            // ever hanging) — see the ROOT CAUSE, round 2 comment in
+            // open_fillout() for why it must never be built reactively from
+            // a command again.
+            dbg_log("setup: pre-creating hidden fillout window");
+            WebviewWindowBuilder::new(
+                app.handle(),
+                "fillout",
+                WebviewUrl::External("about:blank".parse()?),
+            )
+            .title("Fillout — review, then click the form's own Submit")
+            .inner_size(1320.0, 880.0)
+            .min_inner_size(1000.0, 700.0)
+            .resizable(true)
+            .visible(false)
+            .build()?;
+            dbg_log("setup: fillout window pre-created");
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Hide instead of destroy so open_fillout() never needs to
+            // build() this window again for the rest of the app's life.
+            if window.label() != "fillout" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                dbg_log("fillout window: close requested, hiding instead of destroying");
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .on_page_load(|webview, payload| {
             dbg_log(&format!(
                 "on_page_load: label={} event={:?}",

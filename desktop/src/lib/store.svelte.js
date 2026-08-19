@@ -87,9 +87,10 @@ export async function load() {
   save();
   startTick();
   listenForFillStatus();
-  // Keep Project/Category in sync with the live form on every open instead
-  // of requiring a manual Settings click — same silent-refresh idea as the
-  // gdSync App.svelte already fires after load().
+  // Keep Names/Project/Category in sync with the live form on every open
+  // instead of requiring a manual Settings click — same silent-refresh idea
+  // as the gdSync App.svelte already fires after load().
+  fetchNames().catch(() => {});
   fetchProjectsAndCategories().catch(() => {});
 }
 
