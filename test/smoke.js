@@ -209,7 +209,7 @@ async function harness1() {
   $("finalSubmit").click();
   await sleep(30);
   A(!$("confirmOverlay").classList.contains("hidden"), "custom confirm modal shown (no native confirm())");
-  A($("confirmMsg").textContent.includes("Submit 2 project"), "modal message summarizes the submission");
+  A($("confirmMsg").textContent.includes("Re-fill Fillout with all 2 project"), "modal message summarizes the submission");
   A($("confirmMsg").textContent.length < 400, "modal message is a reasonable length (won't overflow)");
   A($("confirmYes").textContent === "Yes, submit", "Final Submit confirm button reads the default 'Yes, submit'");
   $("confirmNo").click();
@@ -234,19 +234,24 @@ async function harness1() {
   A(store.entries.every((e) => e.submitted), "every entry is marked submitted after a successful Final Submit");
   A(gdBackupCalls === 1, "a successful Final Submit triggers a dated Drive backup");
 
-  // BUG FIX regression: clicking Final Submit again with nothing new pending
-  // must NOT re-send the already-submitted entries a second time — and must
-  // NOT trigger a pointless Drive backup either.
+  // Full-resync model (matches the desktop app): clicking Final Submit again
+  // with NOTHING changed still re-sends every entry — fillFormOnPage clears
+  // whatever's already in the real form first, then fills fresh, so this is
+  // safe/idempotent rather than a no-op. This is what makes an edit or a
+  // removal (tested next) actually reach the real form on the next click,
+  // unlike the old "skip anything already submitted" model.
   lastFill = null;
   gdBackupCalls = 0;
+  fillFormReturn = { added: 2 };
   $("finalSubmit").click();
-  await sleep(20);
-  A(lastFill === null, "Final Submit with everything already submitted does not resubmit anything");
-  A($("submitStatus").textContent.toLowerCase().includes("already submitted"), "status explains everything is already submitted");
-  A(gdBackupCalls === 0, "no new entries added -> no Drive backup triggered");
+  await sleep(30);
+  $("confirmYes").click();
+  await sleep(300);
+  A(Array.isArray(lastFill) && lastFill.length === 2, "Final Submit again with nothing changed re-sends both entries (full resync, not skipped)");
+  A(gdBackupCalls === 1, "the resync still triggers a dated Drive backup");
 
-  // Add ONE new entry -> only that new entry should be sent next time, not
-  // the two already-submitted ones. Also re-verifies ensureFormTab now
+  // Add ONE new entry -> the NEXT Final Submit must resend ALL THREE (full
+  // resync), not just the new one. Also re-verifies ensureFormTab now
   // ALWAYS reloads before automation starts, even for a reused tab (user
   // explicitly wants this every time, accepting that it discards any
   // in-progress session-only entries already on that tab — Fillout doesn't
@@ -257,8 +262,8 @@ async function harness1() {
   $("descInput").value = "Third task";
   $("addProject").click();
   await sleep(20);
-  // Req 2: Final Submit hard-blocks while ANY pending entry is under 1
-  // minute of RAW elapsed time. That's only reachable via a timer stopped
+  // Req 2: Final Submit hard-blocks while ANY entry is under 1 minute of RAW
+  // elapsed time. That's only reachable via a timer stopped
   // after a few real seconds — the hh:mm field's finest granularity is 1
   // minute, so a manually-typed time can never land under 60s. Poke the raw
   // accSec directly (same shape a barely-run timer would leave behind).
@@ -273,13 +278,14 @@ async function harness1() {
 
   thirdEntry.accSec = 90; // fix it -> at least 1 minute, unblocks submit
   lastFill = null;
-  fillFormReturn = { added: 1 };
+  fillFormReturn = { added: 3 };
   $("finalSubmit").click();
   await sleep(30);
-  A($("confirmMsg").textContent.includes("Submit 1 project"), "confirm modal counts only the new pending entry, not the already-submitted ones");
+  A($("confirmMsg").textContent.includes("Re-fill Fillout with all 3 project"), "confirm modal counts ALL entries (full resync), not just the new one");
   $("confirmYes").click();
   await sleep(300);
-  A(Array.isArray(lastFill) && lastFill.length === 1 && lastFill[0].description === "Third task" && lastFill[0].hhmm === "00:02", "second Final Submit re-sends only the NEW entry — no duplicates of the first two");
+  A(Array.isArray(lastFill) && lastFill.length === 3 && lastFill[2].description === "Third task" && lastFill[2].hhmm === "00:02",
+    "Final Submit resends ALL THREE entries (full resync), including the newly added one");
   A(reloadCount === 1, `ensureFormTab reloads a reused tab too, every time (got ${reloadCount})`);
   queryReturnsExisting = false;
 
@@ -711,6 +717,31 @@ async function harness2() {
     target: { tabId: 1 }, func: shell.pageSelectDate, args: ["2026-07-20"],
   });
   A(dateSkipRes.result && dateSkipRes.result.skipped === true, "pageSelectDate skips re-setting an already-correct date");
+
+  // pageClearExistingEntries: the actual upsert mechanism — deletes every
+  // pre-existing entry row (found via its "Edit" control, picking the
+  // trailing sibling clickable as the delete "X", same technique already
+  // shipped in the desktop app) before a resync fill. Build two rows shaped
+  // like the real form (an Edit control + a delete control as siblings) and
+  // confirm both get removed.
+  for (let i = 0; i < 2; i++) {
+    const row = topWin.document.createElement("div");
+    row.className = "entryRowMarker";
+    const editBtn = topWin.document.createElement("button");
+    editBtn.textContent = "Edit";
+    const delBtn = topWin.document.createElement("button");
+    delBtn.textContent = "×";
+    delBtn.addEventListener("click", () => row.remove());
+    row.appendChild(editBtn);
+    row.appendChild(delBtn);
+    topWin.document.body.appendChild(row);
+  }
+  const [clearRes] = await chrome.scripting.executeScript({
+    target: { tabId: 1 }, func: shell.pageClearExistingEntries, args: [],
+  });
+  A(clearRes.result && clearRes.result.before === 2, "pageClearExistingEntries counts existing rows before clearing");
+  A(clearRes.result && clearRes.result.after === 0, "pageClearExistingEntries removes every existing row via its Edit control's sibling delete button");
+  A(topWin.document.querySelectorAll("div.entryRowMarker").length === 0, "both entry rows are gone from the DOM (deleted, not just visually hidden)");
 
   topDom.window.close();
   shellDom.window.close();

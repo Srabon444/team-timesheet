@@ -784,42 +784,40 @@ async function finalSubmit() {
     if (isTodayView()) foldActive();
     await persistCurrent();
     render();
-    // Only re-submit entries that haven't gone through yet — otherwise a
-    // second Final Submit click (e.g. after adding one more project) would
-    // re-add every already-submitted entry a second time in the real form.
-    const pending = list.filter((e) => !e.submitted);
-    if (!pending.length) {
-      st.className = "status err";
-      st.textContent = "All projects here already submitted. Add a new one to submit more.";
-      return;
-    }
     // Check raw elapsed seconds, not the minute-rounded hh:mm display — a
     // 30-59s entry rounds UP to "00:01" and would otherwise slip past.
-    const under1min = pending.filter((e) => elapsedSec(e) < 60);
+    const under1min = list.filter((e) => elapsedSec(e) < 60);
     if (under1min.length) {
       st.className = "status err";
       st.textContent = `${under1min.length} project(s) have under 1 minute tracked — set a real time before submitting.`;
       return;
     }
-    const payload = pending.map((e) => ({
+    // Always a full resync (matches the desktop app): fillFormOnPage clears
+    // whatever's already in the Fillout form for this day first, then fills
+    // every LOCAL entry fresh. That's what makes re-running Final Submit
+    // after adding/editing/removing an entry actually correct — an
+    // incremental "only send what's new" model (the old behavior here)
+    // could never reflect an edit or a removal back into the real form.
+    const payload = list.map((e) => ({
       project: e.project,
       category: e.category,
       description: e.description,
       hhmm: secToHHMM(elapsedSec(e)),
     }));
-    const msg = `Submit ${payload.length} project(s) to the timesheet form?` +
+    const msg = `Re-fill Fillout with all ${payload.length} project(s) for this day?` +
       (isTodayView() ? "" : `\nThese are for ${viewDate}.`) +
-      `\n\nThis fills entries only — it will NOT click the form's final Submit.`;
+      `\n\nThis clears any existing entries already in the form, then adds these fresh.` +
+      `\nThe form's own final Submit stays yours to click.`;
     if (!(await showConfirm(msg))) return;
 
     st.textContent = "Opening form…";
     const tabId = await ensureFormTab();
     st.textContent = "Filling entries…";
     const out = await fillFormOnPage(tabId, payload, S.name, viewDate);
-    // fillFormOnPage processes `pending` in order and stops at the first
+    // fillFormOnPage processes `list` in order and stops at the first
     // failure, so the first `added` of them are the ones that succeeded.
     const addedCount = out ? out.added : 0;
-    for (let i = 0; i < addedCount; i++) pending[i].submitted = true;
+    for (let i = 0; i < addedCount; i++) list[i].submitted = true;
     // Dated Drive snapshot right at the moment entries are marked submitted —
     // best-effort: skip quietly if Drive isn't connected or nothing's there yet.
     if (addedCount > 0) {
@@ -836,8 +834,10 @@ async function finalSubmit() {
       st.className = "status err";
       st.textContent = "Stopped: " + out.error + ` (${addedCount} added)`;
     } else {
-      st.className = "status ok";
-      st.textContent = `Done — ${addedCount} entries added. Review & Submit manually.`;
+      st.className = out && out.warning ? "status err" : "status ok";
+      st.textContent = `Done — ${addedCount} entries added.` +
+        (out && out.warning ? ` ⚠ ${out.warning}` : "") +
+        " Review & Submit manually.";
     }
   } catch (err) {
     st.className = "status err";
@@ -1021,6 +1021,55 @@ function pageSelectDate(dateStr) {
   });
 }
 
+// Deletes every existing "Timesheet Entries" row for this Name+Date before
+// filling, so re-running Final Submit (after locally adding/editing/
+// removing entries) is a clean resync instead of appending on top of stale
+// data. Ported from the desktop app's fillout-inject.js — the delete
+// control's shape isn't documented anywhere, so instead of guessing it,
+// this finds each row via its "Edit" text control and picks the LAST other
+// clickable element sharing an ancestor with it (climbing a few levels
+// since the row wrapper depth isn't fixed either) — reliably the delete "X"
+// given the row's left-to-right layout. Confirmed live against this exact
+// form, same technique already shipped in the desktop app.
+async function pageClearExistingEntries() {
+  const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const fire = (el, type) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+  const countRows = () =>
+    [...document.querySelectorAll("a,button,[role=button]")]
+      .filter((n) => /^edit$/i.test(norm(n.textContent)) && n.offsetParent !== null).length;
+  const before = countRows();
+  for (let i = 0; i < 60 && countRows() > 0; i++) {
+    const editEl = [...document.querySelectorAll("a,button,[role=button]")]
+      .find((n) => /^edit$/i.test(norm(n.textContent)) && n.offsetParent !== null);
+    if (!editEl) break;
+    let del = document.querySelector('button[aria-label*="delete" i],button[aria-label*="remove" i]');
+    let scope = editEl.parentElement;
+    for (let depth = 0; depth < 4 && scope && !del; depth++) {
+      const candidates = [...scope.querySelectorAll("a,button,[role=button]")].filter(
+        (n) =>
+          n.offsetParent !== null &&
+          n !== editEl &&
+          !editEl.contains(n) &&
+          !n.contains(editEl) &&
+          !/^(edit|create|submit)$/i.test(norm(n.textContent))
+      );
+      if (candidates.length) del = candidates[candidates.length - 1];
+      scope = scope.parentElement;
+    }
+    if (!del) break; // couldn't identify a delete control — stop rather than risk a wrong click
+    ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => fire(del, t));
+    await sleep(400);
+    // Some UIs confirm destructive actions with a second click.
+    const confirmBtn = [...document.querySelectorAll("button,[role=button]")].find(
+      (n) => n.offsetParent !== null && /^(delete|confirm|yes|remove|ok)$/i.test(norm(n.textContent))
+    );
+    if (confirmBtn) ["pointerdown", "mousedown", "mouseup", "click"].forEach((t) => fire(confirmBtn, t));
+    await sleep(400);
+  }
+  return { before, after: countRows() };
+}
+
 function pageClickCreate() {
   const fire = (el, type) => el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
   const el = [...document.querySelectorAll("button,[role=button],a,div,span")]
@@ -1142,6 +1191,12 @@ async function fillFormOnPage(tabId, entries, name, date) {
     const [dateRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageSelectDate, args: [date] });
     if (dateRes.result && dateRes.result.error) throw new Error(dateRes.result.error);
 
+    const [clearRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageClearExistingEntries });
+    const clearResult = clearRes && clearRes.result;
+    const warning = clearResult && clearResult.after > 0
+      ? `${clearResult.after} old entr${clearResult.after === 1 ? "y" : "ies"} could not be auto-cleared — remove manually.`
+      : undefined;
+
     for (const e of entries) {
       const [createRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageClickCreate });
       if (createRes.result && createRes.result.error) throw new Error(createRes.result.error);
@@ -1160,7 +1215,7 @@ async function fillFormOnPage(tabId, entries, name, date) {
       await waitForEntryVisible(tabId, e.description);
       added++;
     }
-    return { added };
+    return { added, warning };
   } catch (err) {
     return { error: err.message, added };
   }
