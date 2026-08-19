@@ -234,14 +234,18 @@ pub fn run() {
         let msg = format!("{}\n{}\n", info, std::backtrace::Backtrace::force_capture());
         let _ = std::fs::write(std::env::temp_dir().join("team-timesheet-crash.log"), msg);
     }));
-    // additionalBrowserArgs / WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is
-    // Windows-only (WebView2 specific). Unconfirmed root cause for the Win11
-    // blank-screen/unresponsive report — no crash log or repro data to pin it
-    // down yet — but forcing software rendering is a well-known, reversible
-    // mitigation for exactly this class of WebView2 initial-paint bug on
-    // certain GPU/driver combos. Must be set before any WebView2 is created.
-    #[cfg(target_os = "windows")]
-    std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu");
+    // REVERTED: --disable-gpu via WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS was
+    // tried here as an unconfirmed mitigation for a Win11 blank-screen
+    // report. It correlated with a NEW, worse regression: the "fillout"
+    // window (which navigates to the real, much heavier Fillout React SPA,
+    // unlike the local Svelte main window) going blank and hanging hard
+    // enough that even its own close button stopped responding — consistent
+    // with forced software rendering re-exposing the same class of WebView2
+    // UI-thread deadlock the deferred-eval/main-thread-title workarounds
+    // below were already written to dodge. The panic hook logged nothing
+    // (no Rust panic), so this was a native UI-thread hang, not a crash.
+    // Do not re-add a process-wide additionalBrowserArgs flag without a real
+    // repro to test it against.
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
