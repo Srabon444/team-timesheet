@@ -50,6 +50,18 @@ jobs:
           echo "tag=linux-v0.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           echo "name=v0.0.${{ github.run_number }} (Linux)" >> "$GITHUB_OUTPUT"
 
+      # tauri.conf.json's version was a static "0.1.0" — every build produced
+      # identically-named installer files no matter how many releases had
+      # shipped since, so a downloaded file couldn't be told apart from an
+      # older one. Bump it to the same run-number the release tag/name
+      # already use, so the bundle filenames (e.g. team-timesheet_0.0.87_
+      # amd64.deb) carry a version that actually changes every release.
+      - name: Set app version to match the release
+        run: |
+          jq --arg v "0.0.${{ github.run_number }}" '.version = $v' \
+            desktop/src-tauri/tauri.conf.json > /tmp/tauri.conf.json.tmp
+          mv /tmp/tauri.conf.json.tmp desktop/src-tauri/tauri.conf.json
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
