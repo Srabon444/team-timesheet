@@ -164,8 +164,9 @@ async function init() {
   // A real conflict (both sides changed) resolves automatically to whichever
   // side was edited more recently — see gdSync.
   if (typeof gdSync === "function") gdSync(false).catch(() => {});
-  // Keep Project/Category in sync with the live form on every open instead of
-  // requiring a manual Settings click — same silent-refresh idea as gdSync above.
+  // Keep Names/Project/Category in sync with the live form on every open
+  // instead of requiring a manual click — same silent-refresh idea as gdSync above.
+  loadNames(true).catch(() => {});
   loadProjectsAndCategories(true).catch(() => {});
 }
 
@@ -654,26 +655,27 @@ function parseDropdownOptions(html, fieldName) {
 function parseNames(html) {
   return parseDropdownOptions(html, "Name").sort((a, b) => a.localeCompare(b));
 }
-async function loadNames() {
-  const st = $("setupStatus");
-  st.className = "status";
-  st.textContent = "Loading names…";
+// silent=true (init()'s background auto-refresh) skips all status/DOM
+// writes, same pattern as loadProjectsAndCategories(silent).
+async function loadNames(silent) {
+  const st = silent ? null : $("setupStatus");
+  if (st) { st.className = "status"; st.textContent = "Loading names…"; }
   try {
     const res = await fetch(FORM_URL, { credentials: "omit" });
     const names = parseNames(await res.text());
     if (!names.length) {
-      st.className = "status err";
-      st.textContent = "Could not read names from form.";
+      if (st) { st.className = "status err"; st.textContent = "Could not read names from form."; }
       return;
     }
     S.names = names;
     await chrome.storage.local.set({ names });
-    $("setupPicker").classList.remove("hidden");
-    st.className = "status ok";
-    st.textContent = `Loaded ${names.length} names. Pick yours.`;
+    if (!silent) {
+      $("setupPicker").classList.remove("hidden");
+      st.className = "status ok";
+      st.textContent = `Loaded ${names.length} names. Pick yours.`;
+    }
   } catch (err) {
-    st.className = "status err";
-    st.textContent = "Error: " + err.message;
+    if (st) { st.className = "status err"; st.textContent = "Error: " + err.message; }
   }
 }
 // silent=true (init()'s background auto-refresh) skips all status-element
@@ -1166,7 +1168,7 @@ async function fillFormOnPage(tabId, entries, name, date) {
 
 // ---------- wiring ----------
 document.addEventListener("DOMContentLoaded", () => {
-  $("loadNames").onclick = loadNames;
+  $("loadNames").onclick = () => loadNames(false);
   if ($("loadProjects")) $("loadProjects").onclick = () => loadProjectsAndCategories(false);
   $("saveName").onclick = saveName;
   if ($("openFullView")) $("openFullView").onclick = openFullView;
