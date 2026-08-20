@@ -198,19 +198,40 @@ async function runner(entries, name, date) {
       clearResult.after > 0
         ? clearResult.after + " old entr" + (clearResult.after === 1 ? "y" : "ies") + " could not be auto-cleared — remove manually."
         : "";
+    // The entries list does its own async refetch/re-render after each
+    // delete (same race as after a real submit, confirmed live) — the LAST
+    // deletion's refresh can still be in flight right as the loop below
+    // clicks Create for the first time, landing on a transitional node
+    // whose click silently does nothing. Give it a moment to settle first.
+    if (clearResult.before > 0) await sleep(800);
+
+    const findCreateBtn = () => {
+      const all = [...document.querySelectorAll("button,[role=button],a,div,span")]
+        .filter((n) => norm(n.textContent) === "Create" && n.children.length === 0 && n.offsetParent !== null);
+      return all[0] || null;
+    };
 
     for (const e of entries) {
-      const createBtn = await waitFor(() => {
-        const all = [...document.querySelectorAll("button,[role=button],a,div,span")]
-          .filter((n) => norm(n.textContent) === "Create" && n.children.length === 0 && n.offsetParent !== null);
-        return all[0] || null;
-      }, 12000);
+      let createBtn = await waitFor(findCreateBtn, 12000);
       if (!createBtn) return fail('Create button not found for "' + e.project + '"');
       for (const t of ["pointerdown", "mousedown", "mouseup", "click"]) {
         createBtn.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
       }
 
-      const sub = await waitFor(findSubdoc, 15000);
+      let sub = await waitFor(findSubdoc, 8000);
+      if (!sub) {
+        // Retry once — the first click may have landed on a transitional/
+        // about-to-be-replaced node (list still settling from a delete or
+        // the previous entry's close). A fresh Create button + a second
+        // click recovers cleanly if that's what happened.
+        createBtn = await waitFor(findCreateBtn, 4000);
+        if (createBtn) {
+          for (const t of ["pointerdown", "mousedown", "mouseup", "click"]) {
+            createBtn.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
+          }
+          sub = await waitFor(findSubdoc, 8000);
+        }
+      }
       if (!sub) return fail('entry form did not open for "' + e.project + '"');
       await sleep(300);
 
