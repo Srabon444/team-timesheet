@@ -1196,12 +1196,26 @@ async function fillFormOnPage(tabId, entries, name, date) {
     const warning = clearResult && clearResult.after > 0
       ? `${clearResult.after} old entr${clearResult.after === 1 ? "y" : "ies"} could not be auto-cleared — remove manually.`
       : undefined;
+    // The entries list does its own async refetch/re-render after each
+    // delete (same race already handled below for the entries-list race
+    // after a submit) — the LAST deletion's refresh can still be in flight
+    // right as the loop below clicks Create for the first entry, landing
+    // on a transitional node whose click silently does nothing.
+    if (clearResult && clearResult.before > 0) await sleep(800);
 
     for (const e of entries) {
       const [createRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageClickCreate });
       if (createRes.result && createRes.result.error) throw new Error(createRes.result.error);
 
-      const frameId = await waitForSubframe(tabId);
+      let frameId = await waitForSubframe(tabId, 8000);
+      if (frameId == null) {
+        // Retry once — the first click may have landed on a stale node.
+        // A fresh Create click recovers cleanly if that's what happened.
+        const [retryRes] = await chrome.scripting.executeScript({ target: { tabId }, func: pageClickCreate });
+        if (!(retryRes.result && retryRes.result.error)) {
+          frameId = await waitForSubframe(tabId, 8000);
+        }
+      }
       if (frameId == null) throw new Error(`modal did not open for "${e.project}"`);
 
       const [fillRes] = await chrome.scripting.executeScript({
