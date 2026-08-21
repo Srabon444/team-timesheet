@@ -429,7 +429,12 @@
      Give cards a fixed, readable width and let the strip scroll horizontally
      instead; this also means fewer days show at once, which is the point. */
   @media (max-width: 640px) {
-    .strip { overflow-x: auto; padding-bottom: 8px; }
+    /* Setting overflow-x without overflow-y makes the UA compute the unset
+       axis as auto too (not visible) — that silently clips .today-tag,
+       which deliberately sits at bottom:-18px, outside .daycard's own box,
+       relying on an ancestor's overflow:visible to show at all. Reassert
+       overflow-y explicitly so horizontal scroll doesn't clip it vertically. */
+    .strip { overflow-x: auto; overflow-y: visible; padding-bottom: 8px; }
     .daycard { flex: 0 0 72px; }
   }
 

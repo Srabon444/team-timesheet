@@ -183,6 +183,11 @@
      (min window width is 900px), so it's safe to carry on every branch. */
   @media (max-width: 640px) {
     .titlebar { display: none; }
+    /* .titlebar is hidden above, so when this banner shows it becomes the
+       topmost element — it needs the same status-bar clearance .sidebar
+       gets below, or it renders flush at y=0, behind the phone's status
+       bar (clock/battery icons) and unclickable there. */
+    .gdrive-alert { padding-top: env(safe-area-inset-top); }
     .body { flex-direction: column; }
     .sidebar {
       width: 100%; flex-direction: row; align-items: center;
