@@ -10,6 +10,8 @@ const SUBFORM_URL = "https://techzu.fillout.com/t/kwgd21pozYus";
 // S.projects/S.categories from storage take over — see currentProjects()).
 const DEFAULT_PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "NewERP",
   "Prowork", "Rina CRM", "SME Taskhub", "VSB", "Worksite Mini ERP", "ZuPOS"];
+// Deployed in the timesheet-dashboard project — replace after Task 12.
+const INGEST_URL = "https://YOUR-VERCEL-APP.vercel.app/api/ingest";
 const DEFAULT_CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
 function currentProjects() { return (S.projects && S.projects.length) ? S.projects : DEFAULT_PROJECTS; }
@@ -45,6 +47,25 @@ const PROJECT_COLORS = {
 const PROJECT_FALLBACK_COLOR = "#64748b"; // any project not in the map above
 function projectColor(project) {
   return PROJECT_COLORS[project] || PROJECT_FALLBACK_COLOR;
+}
+
+async function pushIngest(date, method) {
+  if (typeof gdConnected !== "function" || !(await gdConnected())) return; // Drive-backup users only
+  let token;
+  try { token = await gdToken(false); } catch { return; }
+  const list = date === S.date ? S.entries : (S.history[date] || []);
+  if (!list.length) return;
+  const entries = list.map((e) => ({
+    id: e.id, project: e.project, category: e.category,
+    description: e.description, seconds: Math.round(e.accSec || 0),
+  }));
+  try {
+    await fetch(INGEST_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ googleAccessToken: token, name: S.name, date, method, entries }),
+    });
+  } catch (e) {}
 }
 
 var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
@@ -255,6 +276,7 @@ async function markDaySubmitted(date, method) {
   S.submittedDays[date] = { at: Date.now(), method };
   await chrome.storage.local.set({ submittedDays: S.submittedDays });
   updateSubmittedUI();
+  pushIngest(date, method);
 }
 async function unmarkDaySubmitted(date) {
   if (S.submittedDays) delete S.submittedDays[date];
@@ -1264,8 +1286,13 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
       if (changes.submittedDays) {
-        S.submittedDays = changes.submittedDays.newValue || {};
+        const oldVal = changes.submittedDays.oldValue || {};
+        const newVal = changes.submittedDays.newValue || {};
+        S.submittedDays = newVal;
         updateSubmittedUI();
+        for (const [date, info] of Object.entries(newVal)) {
+          if (!oldVal[date] || oldVal[date].at !== info.at) pushIngest(date, info.method);
+        }
       }
       // Push local edits to Drive shortly after any data change. A pull writes
       // the same keys, but gdSync merges rather than blindly overwriting, so
