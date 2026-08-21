@@ -15,7 +15,7 @@ import { dayTotal } from "./stats.js";
 import * as timer from "./timer.js";
 import { parseNames, parseDropdownOptions } from "./names.js";
 import { buildFillScript } from "./fillout-inject.js";
-import { gdBackupNow } from "./gdrive.js";
+import { gdBackupNow, timesheetIngest } from "./gdrive.js";
 
 function defaults() {
   return {
@@ -141,6 +141,14 @@ export function markDaySubmitted(date, method = "manual") {
   if (!app.data.submittedDays) app.data.submittedDays = {};
   app.data.submittedDays[date] = { at: Date.now(), method };
   save();
+  const list = timer.entriesFor(app.data, date);
+  if (list.length) {
+    const entries = list.map((e) => ({
+      id: e.id, project: e.project, category: e.category,
+      description: e.description, seconds: Math.round(e.accSec || 0),
+    }));
+    timesheetIngest(app.data.name, date, method, entries).catch(() => {});
+  }
 }
 export function unmarkDaySubmitted(date) {
   if (app.data.submittedDays) delete app.data.submittedDays[date];
