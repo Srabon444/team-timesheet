@@ -10,8 +10,8 @@ const SUBFORM_URL = "https://techzu.fillout.com/t/kwgd21pozYus";
 // S.projects/S.categories from storage take over — see currentProjects()).
 const DEFAULT_PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "NewERP",
   "Prowork", "Rina CRM", "SME Taskhub", "VSB", "Worksite Mini ERP", "ZuPOS"];
-// Deployed in the timesheet-dashboard project — replace after Task 12.
-const INGEST_URL = "https://YOUR-VERCEL-APP.vercel.app/api/ingest";
+// Deployed in the timesheet-dashboard project (https://github.com/Srabon444/timesheet-dashboard).
+const INGEST_URL = "https://timesheet-dashboard-seven.vercel.app/api/ingest";
 const DEFAULT_CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
 function currentProjects() { return (S.projects && S.projects.length) ? S.projects : DEFAULT_PROJECTS; }
