@@ -223,3 +223,7 @@ export function gdSyncSoon() {
   clearTimeout(syncTimer);
   syncTimer = setTimeout(() => { gdSync(false).catch(() => {}); }, 2500);
 }
+
+export async function timesheetIngest(name, date, method, entries) {
+  return invoke("timesheet_ingest", { name, date, method, entries });
+}

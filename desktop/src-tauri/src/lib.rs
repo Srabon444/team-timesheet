@@ -421,7 +421,8 @@ pub fn run() {
             gdrive::gdrive_connected,
             gdrive::gdrive_connect,
             gdrive::gdrive_disconnect,
-            gdrive::gdrive_api
+            gdrive::gdrive_api,
+            gdrive::timesheet_ingest
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
