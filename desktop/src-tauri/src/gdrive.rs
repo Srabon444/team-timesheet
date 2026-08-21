@@ -219,8 +219,8 @@ pub async fn gdrive_api(
     Ok(text)
 }
 
-// Deployed in the timesheet-dashboard project — replace after Task 12.
-const TIMESHEET_INGEST_URL: &str = "https://YOUR-VERCEL-APP.vercel.app/api/ingest";
+// Deployed in the timesheet-dashboard project (https://github.com/Srabon444/timesheet-dashboard).
+const TIMESHEET_INGEST_URL: &str = "https://timesheet-dashboard-seven.vercel.app/api/ingest";
 
 #[tauri::command]
 pub async fn timesheet_ingest(
