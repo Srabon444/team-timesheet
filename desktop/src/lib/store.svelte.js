@@ -15,7 +15,7 @@ import { dayTotal } from "./stats.js";
 import * as timer from "./timer.js";
 import { parseNames, parseDropdownOptions } from "./names.js";
 import { buildFillScript } from "./fillout-inject.js";
-import { gdBackupNow, timesheetIngest } from "./gdrive.js";
+import { gdBackupNow, timesheetIngest, gdConnected } from "./gdrive.js";
 
 function defaults() {
   return {
@@ -142,7 +142,11 @@ export function markDaySubmitted(date, method = "manual") {
       id: e.id, project: e.project, category: e.category,
       description: e.description, seconds: Math.round(e.accSec || 0),
     }));
-    timesheetIngest(app.data.name, date, method, entries).catch(() => {});
+    gdConnected().then(connected => {
+      if (connected) {
+        timesheetIngest(app.data.name, date, method, entries).catch(() => {});
+      }
+    });
   }
 }
 export function unmarkDaySubmitted(date) {
