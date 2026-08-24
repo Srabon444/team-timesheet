@@ -17,7 +17,7 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 const CLIENT_ID: &str = "789173524951-06e3vdigiqukinorged6o651vogh1tlm.apps.googleusercontent.com";
-const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
+const SCOPE: &str = "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email";
 
 // The client secret is injected at BUILD time from the GD_CLIENT_SECRET env
 // var so it never lives in source (CI sets it from a repo secret; for a local
@@ -217,4 +217,38 @@ pub async fn gdrive_api(
         return Err(format!("Drive {}: {}", status.as_u16(), text));
     }
     Ok(text)
+}
+
+// Deployed in the timesheet-dashboard project (https://github.com/Srabon444/timesheet-dashboard).
+const TIMESHEET_INGEST_URL: &str = "https://timesheet-dashboard-seven.vercel.app/api/ingest";
+
+#[tauri::command]
+pub async fn timesheet_ingest(
+    app: AppHandle,
+    name: String,
+    date: String,
+    method: String,
+    entries: serde_json::Value,
+) -> Result<(), String> {
+    let token = access_token(&app).await?;
+    let body = serde_json::json!({
+        "googleAccessToken": token,
+        "name": name,
+        "date": date,
+        "method": method,
+        "entries": entries,
+    });
+    let res = reqwest::Client::new()
+        .post(TIMESHEET_INGEST_URL)
+        .header("content-type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = res.status();
+    if !status.is_success() {
+        let text = res.text().await.unwrap_or_default();
+        return Err(format!("ingest {}: {}", status.as_u16(), text));
+    }
+    Ok(())
 }
