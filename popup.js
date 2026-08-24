@@ -50,9 +50,9 @@ function projectColor(project) {
 }
 
 async function pushIngest(date, method) {
-  if (typeof gdConnected !== "function" || !(await gdConnected())) return; // Drive-backup users only
+  if (typeof gdToken !== "function") return; // gdrive.js not loaded (e.g. tests)
   let token;
-  try { token = await gdToken(false); } catch { return; }
+  try { token = await gdToken(false); } catch { return; } // not signed in to Google — skip silently
   const list = date === S.date ? S.entries : (S.history[date] || []);
   if (!list.length) return;
   const entries = list.map((e) => ({
