@@ -186,15 +186,19 @@ export async function gdSync(interactive) {
   const { days: mergedDays, deleted: mergedDeleted } = mergeDays(localObj.days, localDeleted, driveDays, driveDeleted);
   const mergedSubmitted = { ...driveSubmitted, ...(localObj.submittedDays || {}) };
 
+  // Reads from mergedDays (not localObj.days) so a day submitted on ANOTHER
+  // device — pulled in only by this merge — gets pushed too, not just days
+  // this device already had locally.
   for (const [date, info] of Object.entries(mergedSubmitted)) {
     if (info && info.method) {
-      const list = localObj.days[date] || [];
+      const list = mergedDays[date] || [];
       if (list.length) {
         const entries = list.map(e => ({
           id: e.id, project: e.project || "", category: e.category || "",
           description: e.description || "", seconds: Math.round(e.accSec || 0)
         }));
-        await timesheetIngest(localObj.name, date, info.method, entries).catch(() => {});
+        await timesheetIngest(localObj.name, date, info.method, entries)
+          .catch((e) => console.error("timesheetIngest failed for", date, e));
       }
     }
   }
