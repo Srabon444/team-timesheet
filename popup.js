@@ -49,24 +49,27 @@ function projectColor(project) {
   return PROJECT_COLORS[project] || PROJECT_FALLBACK_COLOR;
 }
 
-async function pushIngest(date, method) {
+// entriesOverride (already {id,project,category,description,seconds} shaped)
+// lets gdSync's bulk-push pass in a cross-device day's merged entries;
+// without it, entries come from this device's own live state as before.
+async function pushIngest(date, method, entriesOverride) {
   if (typeof gdToken !== "function") return; // gdrive.js not loaded (e.g. tests)
   if (typeof gdConnected === "function" && !(await gdConnected())) return; // Drive-backup users only
   let token;
-  try { token = await gdToken(false); } catch { return; } // not signed in to Google — skip silently
-  const list = date === S.date ? S.entries : (S.history[date] || []);
-  if (!list.length) return;
-  const entries = list.map((e) => ({
+  try { token = await gdToken(false); } catch (e) { console.warn("pushIngest: not signed in to Google", date, e); return; }
+  const entries = entriesOverride || (date === S.date ? S.entries : (S.history[date] || [])).map((e) => ({
     id: e.id, project: e.project, category: e.category,
     description: e.description, seconds: Math.round(e.accSec || 0),
   }));
+  if (!entries.length) return;
   try {
-    await fetch(INGEST_URL, {
+    const res = await fetch(INGEST_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ googleAccessToken: token, name: S.name, date, method, entries }),
     });
-  } catch (e) {}
+    if (!res.ok) console.error("pushIngest: rejected", date, res.status, await res.text().catch(() => ""));
+  } catch (e) { console.error("pushIngest: network error", date, e); }
 }
 
 var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }

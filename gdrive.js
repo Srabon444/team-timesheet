@@ -197,11 +197,21 @@ async function gdSync(interactive) {
   const { days: mergedDays, deleted: mergedDeleted } = gdMergeDays(localObj.days, localDeleted, driveDays, driveDeleted);
   const mergedSubmitted = { ...driveSubmitted, ...(localObj.submittedDays || {}) };
 
-  // Bulk ingest past submitted data to the Dashboard
+  // Bulk ingest past submitted data to the Dashboard. Reads from mergedDays
+  // (not localObj.days) so a day submitted on ANOTHER device — pulled in
+  // only by this merge — gets pushed too, not just days this device already
+  // had locally.
   if (typeof pushIngest === "function") {
     for (const [date, info] of Object.entries(mergedSubmitted)) {
       if (info && info.method) {
-        await pushIngest(date, info.method).catch(() => {});
+        const list = mergedDays[date] || [];
+        if (list.length) {
+          const entries = list.map((e) => ({
+            id: e.id, project: e.project, category: e.category,
+            description: e.description, seconds: Math.round(e.accSec || 0),
+          }));
+          await pushIngest(date, info.method, entries).catch((e) => console.error("pushIngest failed for", date, e));
+        }
       }
     }
   }
