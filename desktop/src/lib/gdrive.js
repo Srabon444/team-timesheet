@@ -186,6 +186,19 @@ export async function gdSync(interactive) {
   const { days: mergedDays, deleted: mergedDeleted } = mergeDays(localObj.days, localDeleted, driveDays, driveDeleted);
   const mergedSubmitted = { ...driveSubmitted, ...(localObj.submittedDays || {}) };
 
+  for (const [date, info] of Object.entries(mergedSubmitted)) {
+    if (info && info.method) {
+      const list = localObj.days[date] || [];
+      if (list.length) {
+        const entries = list.map(e => ({
+          id: e.id, project: e.project || "", category: e.category || "",
+          description: e.description || "", seconds: Math.round(e.accSec || 0)
+        }));
+        await timesheetIngest(localObj.name, date, info.method, entries).catch(() => {});
+      }
+    }
+  }
+
   // Never write an empty backup, in either direction. Structurally the merge
   // above can't produce an empty result unless both sides genuinely have
   // nothing (or everything present was explicitly deleted) — this is the
