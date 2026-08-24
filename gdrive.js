@@ -197,6 +197,15 @@ async function gdSync(interactive) {
   const { days: mergedDays, deleted: mergedDeleted } = gdMergeDays(localObj.days, localDeleted, driveDays, driveDeleted);
   const mergedSubmitted = { ...driveSubmitted, ...(localObj.submittedDays || {}) };
 
+  // Bulk ingest past submitted data to the Dashboard
+  if (typeof pushIngest === "function") {
+    for (const [date, info] of Object.entries(mergedSubmitted)) {
+      if (info && info.method) {
+        await pushIngest(date, info.method).catch(() => {});
+      }
+    }
+  }
+
   // Never write an empty backup, in either direction. Structurally the merge
   // above can't produce an empty result unless both sides genuinely have
   // nothing (or everything present was explicitly deleted) — this is the

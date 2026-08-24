@@ -51,6 +51,7 @@ function projectColor(project) {
 
 async function pushIngest(date, method) {
   if (typeof gdToken !== "function") return; // gdrive.js not loaded (e.g. tests)
+  if (typeof gdConnected === "function" && !(await gdConnected())) return; // Drive-backup users only
   let token;
   try { token = await gdToken(false); } catch { return; } // not signed in to Google — skip silently
   const list = date === S.date ? S.entries : (S.history[date] || []);
