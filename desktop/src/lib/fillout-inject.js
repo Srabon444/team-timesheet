@@ -189,6 +189,13 @@ async function runner(entries, name, date) {
       dateInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
       await sleep(300);
       if (dateInput.value !== ddmmyyyy) return fail(`could not set date to "${ddmmyyyy}"`);
+      // Focusing the field opened its calendar popup; Enter commits the
+      // typed value but doesn't dismiss it (confirmed live) — close it
+      // explicitly so it isn't still floating over the page while entries
+      // fill in, or after the run finishes.
+      dateInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+      dateInput.blur();
+      await sleep(150);
     }
     report({ phase: "date-selected", added });
 
