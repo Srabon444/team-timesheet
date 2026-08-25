@@ -1042,6 +1042,11 @@ function pageSelectDate(dateStr) {
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
   return new Promise((resolve) => {
     setTimeout(() => {
+      // Focusing the field opened its calendar popup; Enter commits the
+      // typed value but doesn't dismiss it (confirmed live) — close it
+      // explicitly so it isn't still floating over the page afterward.
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+      input.blur();
       resolve(input.value === ddmmyyyy ? { ok: true } : { error: `could not set date to "${ddmmyyyy}"` });
     }, 300);
   });
