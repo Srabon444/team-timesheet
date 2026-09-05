@@ -15,7 +15,7 @@ import { dayTotal } from "./stats.js";
 import * as timer from "./timer.js";
 import { parseNames, parseDropdownOptions } from "./names.js";
 import { buildFillScript } from "./fillout-inject.js";
-import { gdBackupNow, timesheetIngest, gdConnected } from "./gdrive.js";
+import { gdBackupNow, gdSyncNow, timesheetIngest, gdConnected, gdConnect } from "./gdrive.js";
 
 function defaults() {
   return {
@@ -136,27 +136,43 @@ export function activeEntry() {
   return timer.entriesFor(app.data, date).find((e) => e.id === activeId) || null;
 }
 
-// ---------- submission status (Task 7: show-only, disables nothing) ----------
-export function markDaySubmitted(date, method = "manual") {
+// ---------- submission status (Task 7) ----------
+export async function markDaySubmitted(date, method = "manual") {
   if (!app.data.submittedDays) app.data.submittedDays = {};
   app.data.submittedDays[date] = { at: Date.now(), method };
   save();
-  const list = timer.entriesFor(app.data, date);
-  if (list.length) {
-    const entries = list.map((e) => ({
-      id: e.id, project: e.project, category: e.category,
-      description: e.description, seconds: Math.round(e.accSec || 0),
-    }));
-    gdConnected().then(connected => {
-      if (connected) {
-        timesheetIngest(app.data.name, date, method, entries).catch(() => {});
-      }
-    });
-  }
+  //* No direct ingest call here: gdSyncNow() pushes every submitted day it knows about, using the
+  //* merged (and correctly folded) entries. Pushing here too just sent the same day twice.
+  await gdSyncNow();
+  gdBackupNow(false).catch(() => {}); // dated snapshot of the moment this day was marked, best-effort
+  if (method === "manual") await nudgeGoogleSignIn();
 }
-export function unmarkDaySubmitted(date) {
-  if (app.data.submittedDays) delete app.data.submittedDays[date];
+//! Unmark writes an explicit null, never deletes the key. The Drive merge is a spread
+//! ({...drive, ...local}), so an absent key lost to Drive's copy and the day came back marked.
+export async function unmarkDaySubmitted(date) {
+  if (!app.data.submittedDays) app.data.submittedDays = {};
+  app.data.submittedDays[date] = null;
   save();
+  if (await gdConnected()) {
+    await timesheetIngest(app.data.name, date, "unmark", []).catch((e) =>
+      console.error("timesheetIngest unmark failed for", date, e)
+    );
+  }
+  await gdSyncNow();
+}
+//! Never blocks the mark — the day is already saved. Signing in only gets it off this device.
+async function nudgeGoogleSignIn() {
+  if (await gdConnected()) return;
+  const go = await showConfirm(
+    "Marked submitted on this device only.\n\n" +
+      "Signing in to Google backs this day up to your Drive and sends it to the team dashboard. " +
+      "Sign in now?",
+    "Sign in"
+  );
+  if (!go) return;
+  //* Failure lands in the existing reconnect banner rather than a new error surface — the
+  //* banner now retries the consent flow directly, so it is the one place to send them.
+  try { await gdConnect(); } catch { app.gdriveNeedsReconnect = true; }
 }
 export function daySubmitted(date) {
   return app.data.submittedDays ? app.data.submittedDays[date] : null;
