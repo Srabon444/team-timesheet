@@ -1,5 +1,6 @@
 <script>
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
   import { app, nav, load } from "./lib/store.svelte.js";
   import { gdSync, gdSyncSoon, gdConnect } from "./lib/gdrive.js";
   import Confirm from "./components/Confirm.svelte";
@@ -52,6 +53,12 @@
 //! double-click — gdrive_connect binds a loopback listener and blocks up to 5 minutes, so two in
 //! flight means two listeners and two browser tabs.
   let reconnecting = $state(false);
+
+  //* The opener plugin is already wired for the Google consent flow; its capability allow-list
+  //* names this URL too, so no JS binding package is needed — the invoke bridge is enough.
+  const DASHBOARD_URL = "https://timesheet-dashboard-seven.vercel.app/";
+  const openDashboard = () =>
+    invoke("plugin:opener|open_url", { url: DASHBOARD_URL }).catch(() => {});
   async function reconnectDrive() {
     if (reconnecting) return;
     reconnecting = true;
@@ -96,6 +103,9 @@
         </button>
       {/each}
       <div class="spacer"></div>
+      <button class="nav" onclick={openDashboard} title="Opens the team dashboard in your browser">
+        <span class="nav-icon">▤</span>Team dashboard ↗
+      </button>
       <button class="nav" class:active={nav.page === "settings"} onclick={() => (nav.page = "settings")}>
         <span class="nav-icon">⚙</span>Settings
       </button>
