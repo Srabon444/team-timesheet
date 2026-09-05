@@ -11,6 +11,8 @@
   } from "../lib/store.svelte.js";
   import AddEntryModal from "../components/AddEntryModal.svelte";
   import CopyToModal from "../components/CopyToModal.svelte";
+  import PrayerModal from "../components/PrayerModal.svelte";
+  import * as prayer from "../lib/prayer.js";
 
   let selected = $state(nav.jumpDate || todayStr());
   let anchor = $state(nav.jumpDate || todayStr()); // day-strip window end
@@ -61,6 +63,20 @@
   });
   const selSubmitted = $derived(daySubmitted(selected));
 
+  //* Subtle by design: one muted line, no panel. Reads app.now so the countdown stays live.
+  let prayerOpen = $state(false);
+  const prayerLine = $derived.by(() => {
+    const p = app.data.prayer;
+    if (!p || !p.enabled || !p.city) return "";
+    void app.now;
+    const now = new Date();
+    const times = (p.days || {})[prayer.dayKey(now)];
+    if (!times) return "times unavailable";
+    const next = prayer.nextPrayer(times, now.getHours() * 60 + now.getMinutes());
+    if (!next) return "all prayers done for today";
+    const h = Math.floor(next.inMin / 60);
+    return `${next.name} ${times[next.name]} · in ${h ? h + "h " : ""}${next.inMin % 60}m`;
+  });
 
   function stripTotal(date) {
     void app.now;
@@ -322,6 +338,13 @@
       {/if}
       {#if app.fill.message}<p class="status-ok">{app.fill.message}</p>{/if}
       {#if app.fill.error}<p class="status-err">{app.fill.error}</p>{/if}
+
+      <div class="prayer-row">
+        <button class="link" onclick={() => (prayerOpen = true)}>
+          🕌 {app.data.prayer?.enabled && app.data.prayer?.city ? app.data.prayer.city : "Namaj Time"}
+        </button>
+        {#if prayerLine}<span class="muted small">{prayerLine}</span>{/if}
+      </div>
     </div>
   </div>
 {/if}
@@ -338,6 +361,10 @@
 
 {#if copyModalOpen}
   <CopyToModal minDate={today} onclose={() => (copyModalOpen = false)} onconfirm={copyToTarget} />
+{/if}
+
+{#if prayerOpen}
+  <PrayerModal onclose={() => (prayerOpen = false)} />
 {/if}
 
 <style>
@@ -457,6 +484,12 @@
   .tabbtn.on { color: var(--accent-light); border-bottom-color: var(--accent); }
 
   .empty { text-align: center; padding: 60px 0; }
+
+  .prayer-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-top: 14px; padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+  }
 
   .rows { display: flex; flex-direction: column; gap: 10px; }
   .row {
