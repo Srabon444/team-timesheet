@@ -1,7 +1,7 @@
 <script>
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { app, nav, load } from "./lib/store.svelte.js";
-  import { gdSync, gdSyncSoon } from "./lib/gdrive.js";
+  import { gdSync, gdSyncSoon, gdConnect } from "./lib/gdrive.js";
   import Confirm from "./components/Confirm.svelte";
   import Timer from "./pages/Timer.svelte";
   import Timesheet from "./pages/Timesheet.svelte";
@@ -47,6 +47,22 @@
   // load re-fails and re-flags), but doesn't get nagged on every retry
   // in between. Never shown at all if they've simply never connected.
   let dismissed = $state(false);
+
+//! Runs the consent flow directly; Settings is only the fallback. `reconnecting` guards a
+//! double-click — gdrive_connect binds a loopback listener and blocks up to 5 minutes, so two in
+//! flight means two listeners and two browser tabs.
+  let reconnecting = $state(false);
+  async function reconnectDrive() {
+    if (reconnecting) return;
+    reconnecting = true;
+    try {
+      await gdConnect();
+    } catch {
+      nav.page = "settings";
+    } finally {
+      reconnecting = false;
+    }
+  }
 </script>
 
 <div class="shell">
@@ -61,8 +77,8 @@
 
   {#if app.gdriveNeedsReconnect && !dismissed}
     <div class="gdrive-alert">
-      <button class="gdrive-alert-msg" onclick={() => (nav.page = "settings")}>
-        ⚠ Google Drive session expired — tap to reconnect
+      <button class="gdrive-alert-msg" onclick={reconnectDrive} disabled={reconnecting}>
+        {reconnecting ? "Opening Google sign-in…" : "⚠ Google Drive session expired — tap to reconnect"}
       </button>
       <button class="gdrive-alert-close" onclick={() => (dismissed = true)} title="Dismiss">✕</button>
     </div>
