@@ -94,16 +94,31 @@ async function gdUpdateFile(token, fileId, content) {
 // Runs gdSync first — never snapshots this device's raw local view, which
 // could be missing entries another device added while this one was offline;
 // throws rather than ever writing an empty snapshot.
-async function gdBackupNow() {
-  await gdSync(true);
-  const token = await gdToken(true);
+//! interactive=false for anything fired off a plain click — the consent window takes focus and
+//! destroys the popup mid-call. Only the full view's explicit "Back up now" should prompt.
+async function gdBackupNow(interactive) {
+  if (interactive === undefined) interactive = true;
+  await gdSync(interactive);
+  const token = await gdToken(interactive);
   const folderId = await gdEnsureFolder(token);
   const latest = await gdFindLatest(token, folderId);
   if (!latest) throw new Error("Nothing to back up yet — add an entry first.");
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-  await gdCreateFile(token, folderId, `timesheet-${stamp}.json`, latest.content);
+  const name = `timesheet-${stamp}.json`;
+  //? Stamps are minute-resolution and Drive allows duplicate names, so two snapshots in one
+  //? minute produced two indistinguishable files. Overwrite the minute's snapshot instead.
+  const existing = await gdFindByName(token, folderId, name);
+  if (existing) await gdUpdateFile(token, existing, latest.content);
+  else await gdCreateFile(token, folderId, name, latest.content);
+}
+
+async function gdFindByName(token, folderId, name) {
+  const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
+  const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  const j = await r.json();
+  return j.files && j.files.length ? j.files[0].id : null;
 }
 
 async function gdListBackups(token) {

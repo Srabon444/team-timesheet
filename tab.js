@@ -310,7 +310,7 @@ async function gdMaybeAutoBackup() {
   if (typeof S === "undefined" || !S || !S.gdAutoBackup) return;
   if (S.gdLastBackup === todayStr()) return;
   try {
-    await gdBackupNow(); // throws (and skips) if there's nothing to back up yet
+    await gdBackupNow(false); // throws (and skips) if there's nothing to back up yet
     S.gdLastBackup = todayStr();
     await chrome.storage.local.set({ gdLastBackup: S.gdLastBackup });
   } catch (e) { /* not connected, offline, or nothing to back up — skip quietly */ }
