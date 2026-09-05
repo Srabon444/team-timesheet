@@ -61,6 +61,7 @@
   });
   const selSubmitted = $derived(daySubmitted(selected));
 
+
   function stripTotal(date) {
     void app.now;
     let t = dayTotal(app.data.days[date]);
@@ -435,12 +436,13 @@
      Give cards a fixed, readable width and let the strip scroll horizontally
      instead; this also means fewer days show at once, which is the point. */
   @media (max-width: 640px) {
-    /* Setting overflow-x without overflow-y makes the UA compute the unset
-       axis as auto too (not visible) — that silently clips .today-tag,
-       which deliberately sits at bottom:-18px, outside .daycard's own box,
-       relying on an ancestor's overflow:visible to show at all. Reassert
-       overflow-y explicitly so horizontal scroll doesn't clip it vertically. */
-    .strip { overflow-x: auto; overflow-y: visible; padding-bottom: 8px; }
+    /*! overflow-y:visible does NOT survive here — once one axis is auto/scroll the other
+       computes to auto too, so the strip clips both ways however it is declared. .today-tag
+       sits at bottom:-18px, outside .daycard, so it was scrolled out of view: the tag only
+       appeared after scrolling the page down. Reserve room for it in the strip's own padding
+       instead, which is inside the scrollable area and needs no overflow trickery.
+       Tag spans roughly 18–32px below the card, so 34px clears it. */
+    .strip { overflow-x: auto; padding-bottom: 34px; }
     .daycard { flex: 0 0 72px; }
   }
 
