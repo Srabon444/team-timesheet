@@ -1,5 +1,5 @@
 .claude/
-node_modules/
+node_modules
 
 # Desktop (Tauri) build artifacts — the desktop app lives on desktop-* branches,
 # but building it leaves these generated dirs behind in the working tree on
