@@ -291,9 +291,8 @@ export async function submitToFillout(date) {
     try {
       const n = await submitHeadless(app.data.name, date, payload);
       timer.markSubmitted(app.data, date, payload.map((p) => p.id));
-      markDaySubmitted(date, "auto");
+      markDaySubmitted(date, "auto"); //* snapshots and syncs on its own now
       save();
-      gdBackupNow().catch(() => {}); // dated snapshot right when entries got marked submitted
       app.fill = { running: false, added: n, error: "", message: `Submitted ${n} entr${n === 1 ? "y" : "ies"} to Fillout ✓`, date };
     } catch (e) {
       app.fill = { running: false, added: 0, message: "", error: `Submit failed: ${e.message || e}`, date };
