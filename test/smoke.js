@@ -1235,6 +1235,66 @@ async function harness8() {
   dom.window.close();
 }
 
+// ============================================================
+// HARNESS 9 — day-submitted marking: tombstones + Final Submit gating
+// ============================================================
+async function harness9() {
+  console.log("\n== Harness 9: mark/unmark tombstones + Final Submit gating ==");
+  const store = {};
+  const chromeMock = {
+    storage: { local: {
+      get: async (k) => (k === null ? { ...store } : {}),
+      set: async (obj) => { Object.assign(store, obj); },
+    } },
+  };
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  dom.window.chrome = chromeMock;
+  dom.window.crypto = { randomUUID: () => "id-x" };
+  dom.window.document.addEventListener = () => {}; // keep init()/route() out of it — see harness8
+  const s = dom.window.document.createElement("script");
+  s.textContent = jsSrc;
+  dom.window.document.body.appendChild(s);
+  const win = dom.window;
+
+  const DAY = "2026-09-04";
+  win.S.date = DAY;
+  win.S.entries = [{ id: "e1", project: "P", category: "C", description: "d", accSec: 600 }];
+  win.S.history = {};
+  win.S.submittedDays = {};
+  win.S.timer = { activeId: null, startedAt: null };
+  win.setViewDate(DAY);
+
+  await win.markDaySubmitted(DAY, "manual");
+  A(win.daySubmitted(DAY) === true, "marking a day reports it submitted");
+  A(win.document.getElementById("finalSubmit").disabled === true, "Final Submit is disabled while the day is marked");
+
+  await win.unmarkDaySubmitted(DAY);
+  A(win.daySubmitted(DAY) === false, "unmarking clears the submitted state");
+  A(win.document.getElementById("finalSubmit").disabled === false, "Final Submit is usable again after unmarking");
+
+  // The bug this guards: `delete`-ing the key left nothing for the Drive merge
+  // ({...drive, ...local}) to override, so the day came back marked ~2.5s later.
+  A(DAY in store.submittedDays, "unmark leaves a tombstone in storage, not a missing key");
+  A(store.submittedDays[DAY] === null, "the tombstone is an explicit null");
+  const drive = { [DAY]: { at: 1, method: "manual" } };
+  const merged = { ...drive, ...store.submittedDays };
+  A(merged[DAY] === null, "a Drive copy that still has the day marked cannot resurrect it");
+
+  // A tombstone must never crash the listener that pushes to the dashboard.
+  const seen = [];
+  win.pushIngest = async (d) => seen.push(["ingest", d]);
+  win.pushUnmark = async (d) => seen.push(["unmark", d]);
+  let threw = null;
+  try {
+    for (const [date, info] of Object.entries(store.submittedDays)) {
+      if (info) { win.pushIngest(date, info.method); } else if (drive[date]) { win.pushUnmark(date); }
+    }
+  } catch (e) { threw = e; }
+  A(threw === null, "reading a tombstoned day does not throw on info.method");
+  A(seen.length === 1 && seen[0][0] === "unmark", "a tombstoned day pushes an unmark, not an ingest");
+  dom.window.close();
+}
+
 (async () => {
   await harness1();
   await harness2();
@@ -1244,6 +1304,7 @@ async function harness8() {
   await harness6();
   await harness7();
   await harness8();
+  await harness9();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();

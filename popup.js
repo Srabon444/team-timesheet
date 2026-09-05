@@ -57,9 +57,11 @@ async function pushIngest(date, method, entriesOverride) {
   if (typeof gdConnected === "function" && !(await gdConnected())) return; // Drive-backup users only
   let token;
   try { token = await gdToken(false); } catch (e) { console.warn("pushIngest: not signed in to Google", date, e); return; }
+  //! elapsedSec, not raw accSec — a running timer isn't folded in yet, so raw reads the entry at
+  //! its pre-start value. buildDaysMap() folds, which is why the two paths used to disagree.
   const entries = entriesOverride || (date === S.date ? S.entries : (S.history[date] || [])).map((e) => ({
     id: e.id, project: e.project, category: e.category,
-    description: e.description, seconds: Math.round(e.accSec || 0),
+    description: e.description, seconds: Math.round(elapsedSec(e)),
   }));
   if (!entries.length) return;
   try {
@@ -70,6 +72,23 @@ async function pushIngest(date, method, entriesOverride) {
     });
     if (!res.ok) console.error("pushIngest: rejected", date, res.status, await res.text().catch(() => ""));
   } catch (e) { console.error("pushIngest: network error", date, e); }
+}
+
+// Retract a day from the dashboard. Sent as its own method rather than an empty-entries ingest so
+// the server can delete the day outright instead of upserting an empty one.
+async function pushUnmark(date) {
+  if (typeof gdToken !== "function") return; // gdrive.js not loaded (e.g. tests)
+  if (typeof gdConnected === "function" && !(await gdConnected())) return;
+  let token;
+  try { token = await gdToken(false); } catch (e) { console.warn("pushUnmark: not signed in to Google", date, e); return; }
+  try {
+    const res = await fetch(INGEST_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ googleAccessToken: token, name: S.name, date, method: "unmark", entries: [] }),
+    });
+    if (!res.ok) console.error("pushUnmark: rejected", date, res.status, await res.text().catch(() => ""));
+  } catch (e) { console.error("pushUnmark: network error", date, e); }
 }
 
 var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
@@ -275,17 +294,39 @@ function updateDayNav() {
 function daySubmitted(date) {
   return !!(S.submittedDays && S.submittedDays[date]);
 }
+// Neither of these pushes to Drive/the dashboard itself: the storage write below fires
+// storage.onChanged, which does the ingest push, and gdSyncNow() does the Drive write.
 async function markDaySubmitted(date, method) {
   S.submittedDays = S.submittedDays || {};
   S.submittedDays[date] = { at: Date.now(), method };
   await chrome.storage.local.set({ submittedDays: S.submittedDays });
   updateSubmittedUI();
-  pushIngest(date, method);
+  await gdSyncNow();
+  //* Dated snapshot of the moment this day was marked. Non-interactive and best-effort: the
+  //* rolling timesheet-latest.json written by gdSyncNow() above is the copy that actually matters.
+  if (typeof gdBackupNow === "function") gdBackupNow(false).catch(() => {});
+  if (method === "manual") await nudgeGoogleSignIn();
 }
+//! Unmark writes an explicit null, never deletes the key. The Drive merge is a spread
+//! ({...drive, ...local}), so an absent key lost to Drive's copy and the day came back marked.
 async function unmarkDaySubmitted(date) {
-  if (S.submittedDays) delete S.submittedDays[date];
-  await chrome.storage.local.set({ submittedDays: S.submittedDays || {} });
+  S.submittedDays = S.submittedDays || {};
+  S.submittedDays[date] = null;
+  await chrome.storage.local.set({ submittedDays: S.submittedDays });
   updateSubmittedUI();
+  await gdSyncNow();
+}
+//! Never blocks the mark — the day is already saved. Points at the full view because an
+//! interactive getAuthToken() from the popup tears the popup down mid-prompt.
+async function nudgeGoogleSignIn() {
+  if (typeof gdConnected !== "function" || (await gdConnected())) return;
+  const go = await showDialog(
+    "Marked submitted on this device only.\n\n" +
+      "Signing in to Google backs this day up to your Drive and sends it to the team dashboard. " +
+      "Open the full view to sign in?",
+    "Open full view"
+  );
+  if (go === "yes") await openFullView();
 }
 function updateSubmittedUI() {
   const state = $("daySubmitState");
@@ -299,6 +340,13 @@ function updateSubmittedUI() {
     // Nothing to mark submitted if there's no entries for this day —
     // unmarking stays available so a wrong mark can always be undone.
     btn.disabled = !done && currentEntries().length === 0;
+  }
+  //! A submitted day can't be re-filled without unmarking first — Unmark right next to it is the
+  //! only escape, which is why its tombstone has to actually survive a Drive sync.
+  const fs = $("finalSubmit");
+  if (fs) {
+    fs.disabled = done;
+    fs.title = done ? "This day is marked submitted — unmark it first to re-fill the form." : "";
   }
 }
 // Injected into the form tab after a fill: watches for the "Thank you"
@@ -786,10 +834,22 @@ function refreshDataViews() {
 }
 // Debounced push after local edits (gdrive.js provides gdSync; absent in tests).
 let gdSyncTimer = null;
+let gdSyncedAt = 0;
 function gdSyncSoon() {
   if (typeof gdSync !== "function") return;
   clearTimeout(gdSyncTimer);
-  gdSyncTimer = setTimeout(() => { gdSync(false).catch(() => {}); }, 2500);
+  gdSyncTimer = setTimeout(() => { gdSyncNow().catch(() => {}); }, 2500);
+}
+//! The 2500ms debounce dies with the popup, so marking and closing lost the push. Anything that
+//! must not be lost awaits this instead of arming the timer.
+//* Both paths funnel through here so one write can't kick off two full sweeps — gdSync re-pushes
+//* every submitted day it knows about, so a duplicate sweep is not free.
+async function gdSyncNow() {
+  if (typeof gdSync !== "function") return "";
+  if (Date.now() - gdSyncedAt < 3000) { gdSyncSoon(); return ""; } // too soon — re-arm, never drop
+  clearTimeout(gdSyncTimer);
+  gdSyncedAt = Date.now();
+  try { return await gdSync(false); } finally { gdSyncedAt = Date.now(); }
 }
 
 // ---------- final submit ----------
@@ -849,7 +909,7 @@ async function finalSubmit() {
     if (addedCount > 0) {
       await persistCurrent();
       render();
-      if (typeof gdBackupNow === "function") gdBackupNow().catch(() => {});
+      if (typeof gdBackupNow === "function") gdBackupNow(false).catch(() => {});
     }
     // Auto-detect the user's real Submit (Task 7): leave a watcher in the form
     // tab that marks this day submitted when the "Thank you" screen appears.
@@ -1300,7 +1360,13 @@ document.addEventListener("DOMContentLoaded", () => {
         S.submittedDays = newVal;
         updateSubmittedUI();
         for (const [date, info] of Object.entries(newVal)) {
-          if (!oldVal[date] || oldVal[date].at !== info.at) pushIngest(date, info.method);
+          //! `info` is null for a tombstoned (unmarked) day — reading .method off it throws and
+          //! kills the rest of this listener, including the gdSyncSoon() below.
+          if (info) {
+            if (!oldVal[date] || oldVal[date].at !== info.at) pushIngest(date, info.method);
+          } else if (oldVal[date]) {
+            pushUnmark(date);
+          }
         }
       }
       // Push local edits to Drive shortly after any data change. A pull writes
