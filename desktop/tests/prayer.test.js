@@ -6,7 +6,7 @@ import {
   pickFive, toMinutes, duePrayers, nextPrayer, indexCalendar, pruneToMonth,
   notificationText, dayKey, monthPrefix,
 } from "../src/lib/prayer.js";
-import { prayerReminderAt, PRAYER_REMINDERS } from "../src/lib/prayer-hadiths.js";
+import { prayerReminderAt, PRAYER_REMINDERS, PRAYER_HEADINGS } from "../src/lib/prayer-hadiths.js";
 
 const raw = {
   Fajr: "04:23 (+06)", Sunrise: "05:40 (+06)", Dhuhr: "11:58 (+06)", Asr: "15:27 (+06)",
@@ -116,9 +116,20 @@ describe("reminders", () => {
     }
   });
 
-  it("names the prayer in the notification title", () => {
+  it("names the prayer in Bengali in the notification title", () => {
     const n = notificationText("Maghrib", prayerReminderAt(0));
-    expect(n.title).toMatch(/^Maghrib/);
+    expect(n.title).toBe("মাগরিবের ওয়াক্ত হয়েছে");
     expect(n.body).toContain("—");
+  });
+
+  it("has a Bengali heading for every one of the five prayers", () => {
+    for (const name of ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]) {
+      expect(PRAYER_HEADINGS[name]).toBeTruthy();
+      expect(notificationText(name, prayerReminderAt(0)).title).not.toBe(name);
+    }
+  });
+
+  it("falls back to the API name when a heading is missing", () => {
+    expect(notificationText("Sunrise", prayerReminderAt(0)).title).toBe("Sunrise");
   });
 });
