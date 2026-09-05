@@ -4,6 +4,8 @@
 //
 // ES module twin of the extension's plain-script prayer.js; the logic is deliberately identical.
 
+import { PRAYER_HEADINGS } from "./prayer-hadiths.js";
+
 const PRAYER_API = "https://api.aladhan.com/v1";
 //* The five obligatory prayers only. The API also returns Sunrise/Imsak/Midnight/Firstthird —
 //* none of those are prayers and none should raise a notification.
@@ -82,9 +84,10 @@ export function nextPrayer(times, nowMin) {
   return null;
 }
 
+//* Bengali headings; falls back to the API's own name so a missing one can't read "undefined".
 export function notificationText(name, reminder) {
   return {
-    title: `${name} — time to pray`,
+    title: PRAYER_HEADINGS[name] || name,
     body: reminder ? `${reminder.text}\n— ${reminder.source}` : "",
   };
 }
