@@ -95,6 +95,11 @@
               <span id="daySubmitState" class="submitState"></span>
               <button id="markSubmitBtn" class="link"></button>
             </div>
+            <!--* Subtle by design: one line at the foot of the day, not a panel. -->
+            <div id="prayerRow" class="prayerRow">
+              <button id="prayerBtn" class="link">🕌 Namaj Time</button>
+              <span id="prayerNext" class="muted small"></span>
+            </div>
           </section>
 
         </div>
@@ -252,6 +257,33 @@
     </div>
   </div>
 
+
+  <!-- Prayer reminders. City/country are free text: the Aladhan API has no country or city list
+       to populate a dropdown from, and it answers 200 with someone else's times for a city it
+       doesn't know — so the resolved timezone is shown and checked before Save unlocks. -->
+  <div id="prayerOverlay" class="overlay hidden">
+    <div class="confirmBox prayerBox">
+      <p><strong>Prayer time reminders</strong></p>
+      <label class="prayerToggle">
+        <input id="prayerEnabled" type="checkbox">
+        <span>Notify me at each prayer time</span>
+      </label>
+      <label>City</label>
+      <input id="prayerCity" type="text" autocomplete="off" placeholder="Dhaka">
+      <label>Country</label>
+      <input id="prayerCountry" type="text" autocomplete="off" placeholder="Bangladesh">
+      <button id="prayerCheck" class="btn">Check times</button>
+      <p id="prayerStatus" class="status"></p>
+      <div id="prayerPreview" class="prayerPreview hidden"></div>
+      <div class="confirmActions">
+        <button id="prayerCancel" class="btn">Close</button>
+        <button id="prayerSave" class="btn primary" disabled>Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="prayer-hadiths.js"></script>
+  <script src="prayer.js"></script>
   <script src="popup.js"></script>
   <script src="gdrive.js"></script>
   <script src="tab.js"></script>

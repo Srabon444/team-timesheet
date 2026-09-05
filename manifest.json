@@ -15,7 +15,8 @@
   "host_permissions": [
     "https://techzu.fillout.com/*",
     "https://www.googleapis.com/*",
-    "https://oauth2.googleapis.com/*"
+    "https://oauth2.googleapis.com/*",
+    "https://api.aladhan.com/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -208,6 +208,8 @@ async function init() {
   // A real conflict (both sides changed) resolves automatically to whichever
   // side was edited more recently — see gdSync.
   if (typeof gdSync === "function") gdSync(false).catch(() => {});
+  //* Refreshes the cached month when it rolls over; a no-op the rest of the time.
+  if (typeof prayerEnsureMonth === "function") prayerEnsureMonth().then(renderPrayerRow).catch(() => {});
   // Keep Names/Project/Category in sync with the live form on every open
   // instead of requiring a manual click — same silent-refresh idea as gdSync above.
   loadNames(true).catch(() => {});
@@ -852,6 +854,122 @@ async function gdSyncNow() {
   try { return await gdSync(false); } finally { gdSyncedAt = Date.now(); }
 }
 
+// ---------- prayer reminders (UI only — background.js fires the notifications) ----------
+//! prayer.js/prayer-hadiths.js are absent in the jsdom harness, so every entry point here is
+//! typeof-guarded the same way the Drive calls are.
+let prayerVerified = null; // a city the API has actually answered for, this session
+
+function prayerFmtIn(min) {
+  const h = Math.floor(min / 60);
+  return h ? `${h}h ${min % 60}m` : `${min}m`;
+}
+
+async function renderPrayerRow() {
+  if (!$("prayerRow") || typeof prayerLoad !== "function") return;
+  const p = await prayerLoad();
+  const btn = $("prayerBtn");
+  const label = $("prayerNext");
+  if (!p.enabled || !p.city) {
+    btn.textContent = "🕌 Namaj Time";
+    label.textContent = "";
+    return;
+  }
+  btn.textContent = `🕌 ${p.city}`;
+  const times = (p.days || {})[todayStr()];
+  if (!times) {
+    label.textContent = "times unavailable";
+    return;
+  }
+  const now = new Date();
+  const next = prayerNext(times, now.getHours() * 60 + now.getMinutes());
+  label.textContent = next
+    ? `${next.name} ${times[next.name]} · in ${prayerFmtIn(next.inMin)}`
+    : "all prayers done for today";
+}
+
+async function openPrayerSettings() {
+  const p = await prayerLoad();
+  prayerVerified = null;
+  $("prayerEnabled").checked = !!p.enabled;
+  $("prayerCity").value = p.city || "";
+  $("prayerCountry").value = p.country || "";
+  $("prayerStatus").className = "status";
+  $("prayerStatus").textContent = "";
+  $("prayerPreview").classList.add("hidden");
+  $("prayerSave").disabled = !p.city; // an already-configured city needs no re-check
+  $("prayerOverlay").classList.remove("hidden");
+}
+
+function prayerSetStatus(msg, cls) {
+  $("prayerStatus").className = "status" + (cls ? " " + cls : "");
+  $("prayerStatus").textContent = msg;
+}
+
+async function prayerDoCheck() {
+  const city = $("prayerCity").value.trim();
+  const country = $("prayerCountry").value.trim();
+  if (!city || !country) return prayerSetStatus("Enter both a city and a country.", "err");
+  prayerSetStatus("Checking…");
+  $("prayerPreview").classList.add("hidden");
+  try {
+    const p = await prayerLoad();
+    const r = await prayerFetchMonth(city, country, p.method, p.school);
+    const times = r.days[todayStr()] || Object.values(r.days)[0] || {};
+    prayerVerified = { ...r, city, country };
+
+    const box = $("prayerPreview");
+    box.textContent = "";
+    const tzLine = document.createElement("div");
+    tzLine.textContent = `Resolved to ${r.tz || "an unknown timezone"}`;
+    box.appendChild(tzLine);
+    const timeLine = document.createElement("div");
+    timeLine.className = "prayerTimes";
+    timeLine.textContent = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]
+      .map((n) => `${n} ${times[n] || "—"}`)
+      .join("   ");
+    box.appendChild(timeLine);
+
+    //! Aladhan answers 200 for a city it has never heard of, with times for somewhere else
+    //! entirely. A timezone that isn't this device's is the one automatic tell there is.
+    const device = prayerDeviceTz();
+    if (device && r.tz && device !== r.tz) {
+      const warn = document.createElement("div");
+      warn.className = "prayerWarn";
+      warn.textContent = `⚠ Your device is on ${device}. If that city name was a typo these times belong to somewhere else — check them before saving.`;
+      box.appendChild(warn);
+    }
+    box.classList.remove("hidden");
+    prayerSetStatus("Found. Check the times above, then Save.", "ok");
+    $("prayerSave").disabled = false;
+  } catch (e) {
+    prayerVerified = null;
+    $("prayerSave").disabled = true;
+    prayerSetStatus(e.message || String(e), "err");
+  }
+}
+
+async function prayerDoSave() {
+  const enabled = $("prayerEnabled").checked;
+  const stored = await prayerLoad();
+  const patch = { enabled };
+  if (prayerVerified) {
+    Object.assign(patch, {
+      city: prayerVerified.city,
+      country: prayerVerified.country,
+      tz: prayerVerified.tz,
+      days: prayerVerified.days,
+      month: prayerVerified.month,
+      notified: {}, //* a new city means today's marks no longer describe anything
+    });
+  }
+  if (enabled && !(patch.city || stored.city)) {
+    return prayerSetStatus("Check a city first.", "err");
+  }
+  await prayerSave(patch);
+  $("prayerOverlay").classList.add("hidden");
+  await renderPrayerRow();
+}
+
 // ---------- final submit ----------
 async function finalSubmit() {
   const st = $("submitStatus");
@@ -1344,6 +1462,12 @@ document.addEventListener("DOMContentLoaded", () => {
   if ($("todayBtn")) $("todayBtn").onclick = () => setViewDate(S.date);
   if ($("viewDateInput")) $("viewDateInput").onchange = (e) => setViewDate(e.target.value);
   $("finalSubmit").onclick = finalSubmit;
+  if ($("prayerBtn")) {
+    $("prayerBtn").onclick = openPrayerSettings;
+    $("prayerCheck").onclick = prayerDoCheck;
+    $("prayerCancel").onclick = () => $("prayerOverlay").classList.add("hidden");
+    $("prayerSave").onclick = prayerDoSave;
+  }
   if ($("copyModeBtn")) $("copyModeBtn").onclick = toggleCopyMode;
   if ($("copyToBtn")) $("copyToBtn").onclick = openCopyToDialog;
   if ($("copyToCancel")) $("copyToCancel").onclick = () => $("copyToOverlay").classList.add("hidden");

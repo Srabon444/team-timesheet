@@ -754,7 +754,8 @@ async function harness3() {
   console.log("\n== Harness 3: background.js live badge/tooltip ==");
   const bgSrc = fs.readFileSync(path.join(ROOT, "background.js"), "utf8");
   let badge = { text: null, color: null, title: null };
-  let alarmCfg = null; // null = cleared
+  const alarms = {}; // name -> config
+  const notes = [];
   const listeners = { changed: [], installed: [], startup: [], alarm: [] };
   let store = { timer: { activeId: null, startedAt: null }, entries: [] };
   const chrome = {
@@ -770,11 +771,14 @@ async function harness3() {
       },
       onChanged: { addListener: (fn) => listeners.changed.push(fn) },
     },
+    // Name-aware: background.js runs two alarms now (the badge tick and the prayer tick), and a
+    // single-slot mock let one clear the other.
     alarms: {
-      create: (name, cfg) => { alarmCfg = { name, ...cfg }; },
-      clear: () => { alarmCfg = null; },
+      create: (name, cfg) => { alarms[name] = { name, ...cfg }; },
+      clear: (name) => { delete alarms[name]; },
       onAlarm: { addListener: (fn) => listeners.alarm.push(fn) },
     },
+    notifications: { create: (id, opts) => { notes.push({ id, ...opts }); } },
     runtime: {
       onInstalled: { addListener: (fn) => listeners.installed.push(fn) },
       onStartup: { addListener: (fn) => listeners.startup.push(fn) },
@@ -786,12 +790,17 @@ async function harness3() {
     const changes = Object.fromEntries(Object.keys(patch).map((k) => [k, { newValue: patch[k] }]));
     listeners.changed.forEach((f) => f(changes, "local"));
   };
-  const fn = new Function("chrome", bgSrc + "\n//# sourceURL=background.js");
-  fn(chrome);
+  // background.js importScripts()es the prayer helpers into its own global scope; concatenating
+  // them ahead of it is what that actually does, so the call itself becomes a no-op here.
+  const swPreamble =
+    fs.readFileSync(path.join(ROOT, "prayer.js"), "utf8") + "\n" +
+    fs.readFileSync(path.join(ROOT, "prayer-hadiths.js"), "utf8") + "\n";
+  const fn = new Function("chrome", "importScripts", swPreamble + bgSrc + "\n//# sourceURL=background.js");
+  fn(chrome, () => {});
   await sleep(20); // let the top-level syncBadge() resolve
 
   A(badge.text === "OFF" && badge.color === "#64748b", "initial state (no timer) shows OFF/gray");
-  A(alarmCfg === null, "no alarm scheduled while idle");
+  A(alarms.tick === undefined, "no alarm scheduled while idle");
   A(badge.title.includes("no timer running"), "idle tooltip says no timer running");
 
   // start a timer on entry "e1" (ZuPOS), ~5s ago
@@ -799,7 +808,7 @@ async function harness3() {
   fireChange({ timer: { activeId: "e1", startedAt: Date.now() - 5000 } });
   await sleep(20);
   A(badge.color === "#16a34a", "timer start -> badge turns green");
-  A(alarmCfg && alarmCfg.name === "tick" && alarmCfg.periodInMinutes === 1, "1-minute repeating alarm scheduled");
+  A(alarms.tick && alarms.tick.name === "tick" && alarms.tick.periodInMinutes === 1, "1-minute repeating alarm scheduled");
   A(/^\d+m$/.test(badge.text), "under an hour -> badge shows minutes, e.g. 0m");
   A(badge.title.includes("ZuPOS") && badge.title.startsWith("Running:"), "tooltip names the running project");
 
@@ -819,7 +828,7 @@ async function harness3() {
   fireChange({ timer: { activeId: null, startedAt: null } });
   await sleep(20);
   A(badge.text === "OFF" && badge.color === "#64748b", "timer pause -> badge back to OFF/gray");
-  A(alarmCfg === null, "alarm cleared on pause");
+  A(alarms.tick === undefined, "alarm cleared on pause");
 
   // unrelated storage key change (no "timer" in patch) -> badge untouched
   badge.text = "OFF";
@@ -834,7 +843,7 @@ async function harness3() {
   badge = { text: null, color: null, title: null };
   await Promise.all(listeners.startup.map((f) => f()));
   await sleep(20);
-  A(badge.color === "#16a34a" && alarmCfg !== null, "onStartup re-syncs badge + alarm to running state from storage");
+  A(badge.color === "#16a34a" && alarms.tick !== undefined, "onStartup re-syncs badge + alarm to running state from storage");
 
   // DAILY LIMIT NOTIFICATION
   const notifications = [];
@@ -1295,6 +1304,121 @@ async function harness9() {
   dom.window.close();
 }
 
+// ============================================================
+// HARNESS 10 — prayer times: pure scheduling logic + the notification path
+// ============================================================
+async function harness10() {
+  console.log("\n== Harness 10: prayer reminders ==");
+  const vm = require("vm");
+  const ctx = { console, Intl, Date, fetch: async () => { throw new Error("no network in tests"); } };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "prayer.js"), "utf8"), ctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "prayer-hadiths.js"), "utf8"), ctx);
+
+  const raw = {
+    Fajr: "04:23 (+06)", Sunrise: "05:40 (+06)", Dhuhr: "11:58 (+06)", Asr: "15:27 (+06)",
+    Sunset: "18:17 (+06)", Maghrib: "18:17 (+06)", Isha: "19:34 (+06)", Imsak: "04:13 (+06)",
+    Midnight: "23:58 (+06)",
+  };
+  const five = ctx.prayerPickFive(raw);
+  A(Object.keys(five).join() === "Fajr,Dhuhr,Asr,Maghrib,Isha", "only the five obligatory prayers are kept");
+  A(five.Fajr === "04:23", "the API's \" (+06)\" offset suffix is stripped");
+  A(!("Sunrise" in five) && !("Imsak" in five) && !("Midnight" in five), "Sunrise/Imsak/Midnight can never raise a notification");
+
+  A(ctx.prayerToMinutes("04:23") === 263, "hh:mm parses to minutes");
+  A(ctx.prayerToMinutes("nonsense") === null, "junk parses to null rather than NaN");
+
+  let r = ctx.prayerDue(five, 15 * 60 + 27, []);
+  A(r.due.join() === "Asr", "a prayer fires on its exact minute");
+  r = ctx.prayerDue(five, 15 * 60 + 30, []);
+  A(r.due.join() === "Asr", "only the just-passed prayer fires");
+  A(r.stale.join() === "Fajr,Dhuhr", "prayers well past are marked stale, not fired");
+  r = ctx.prayerDue(five, 22 * 60, []);
+  A(r.due.length === 0 && r.stale.length === 5, "waking at 22:00 fires nothing instead of five at once");
+  r = ctx.prayerDue(five, 15 * 60 + 30, ["Asr"]);
+  A(r.due.length === 0, "an already-notified prayer never repeats");
+
+  A(ctx.prayerNext(five, 12 * 60).name === "Asr", "next-prayer lookup skips the ones already passed");
+  A(ctx.prayerNext(five, 20 * 60) === null, "after Isha there is no next prayer today");
+
+  const cal = ctx.prayerIndexCalendar([{ date: { gregorian: { date: "01-09-2026" } }, timings: raw }]);
+  A(Object.keys(cal)[0] === "2026-09-01", "the API's DD-MM-YYYY date is flipped to YYYY-MM-DD");
+  A(Object.keys(ctx.prayerPruneToMonth({ "2026-08-31": 1, "2026-09-01": 2 }, "2026-09")).join() === "2026-09-01",
+    "pruning drops other months so the cache can't grow forever");
+
+  const a = ctx.prayerReminderAt(0), b = ctx.prayerReminderAt(1);
+  A(a && a.text && a.source && a.text !== b.text, "reminders rotate rather than repeating");
+  A(ctx.prayerReminderAt(-1).text === ctx.prayerReminderAt(PRAYER_COUNT_PROBE(ctx) - 1).text, "the rotation wraps on negatives too");
+  A(ctx.prayerNotificationText("Asr", a).title.startsWith("Asr"), "the notification names the prayer");
+
+  // --- the real path: background.js, with a day cached and the clock past Asr ---
+  const today = new Date();
+  const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const notes = [];
+  const alarms = {};
+  const listeners = { alarm: [], changed: [] };
+  const store = {
+    timer: { activeId: null, startedAt: null },
+    entries: [],
+    prayer: { enabled: true, city: "Dhaka", country: "Bangladesh", method: 1, school: 1,
+              days: { [key]: { Fajr: "00:01", Dhuhr: "00:02", Asr: "00:03", Maghrib: "23:58", Isha: "23:59" } },
+              notified: {}, reminderIndex: 0 },
+  };
+  const chromeMock = {
+    action: { setBadgeText: () => {}, setBadgeBackgroundColor: () => {}, setTitle: () => {} },
+    storage: { local: {
+      get: async (k) => (Array.isArray(k) ? Object.fromEntries(k.map((x) => [x, store[x]])) : { [k]: store[k] }),
+      set: async (obj) => { Object.assign(store, obj); },
+    }, onChanged: { addListener: (fn) => listeners.changed.push(fn) } },
+    alarms: { create: (n, c) => { alarms[n] = c; }, clear: (n) => { delete alarms[n]; },
+              onAlarm: { addListener: (fn) => listeners.alarm.push(fn) } },
+    notifications: { create: (id, o) => notes.push({ id, ...o }) },
+    runtime: { onInstalled: { addListener: () => {} }, onStartup: { addListener: () => {} } },
+  };
+  const swPreamble =
+    fs.readFileSync(path.join(ROOT, "prayer.js"), "utf8") + "\n" +
+    fs.readFileSync(path.join(ROOT, "prayer-hadiths.js"), "utf8") + "\n";
+  const bg = new Function("chrome", "importScripts",
+    swPreamble + fs.readFileSync(path.join(ROOT, "background.js"), "utf8"));
+  bg(chromeMock, () => {});
+  await sleep(30);
+  A(alarms.prayerTick && alarms.prayerTick.periodInMinutes === 1,
+    "an enabled city schedules the 1-minute prayer alarm");
+
+  listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
+  await sleep(30);
+  // Maghrib/Isha are still ahead; Fajr/Dhuhr/Asr are hours past, so all three are silenced.
+  A(notes.length === 0, "prayers hours past are silenced instead of firing a burst");
+  A((store.prayer.notified[key] || []).join() === "Fajr,Dhuhr,Asr", "they are still recorded so they can't fire later");
+
+  // Now put one prayer inside the grace window and re-run.
+  const now = new Date();
+  const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  store.prayer = { ...store.prayer, days: { [key]: { ...store.prayer.days[key], Maghrib: hhmm } }, notified: {} };
+  notes.length = 0;
+  listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
+  await sleep(30);
+  A(notes.length === 1 && notes[0].title.startsWith("Maghrib"), "a prayer that is due right now fires exactly one notification");
+  A(!!notes[0].message && notes[0].message.includes("—"), "the notification carries a reminder and its source");
+
+  notes.length = 0;
+  listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
+  await sleep(30);
+  A(notes.length === 0, "the same prayer does not fire again on the next tick");
+
+  // Disabling must stop it dead.
+  store.prayer = { ...store.prayer, enabled: false, notified: {} };
+  notes.length = 0;
+  listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
+  await sleep(30);
+  A(notes.length === 0, "the toggle switched off means no notifications at all");
+}
+function PRAYER_COUNT_PROBE(ctx) {
+  let n = 1;
+  while (ctx.prayerReminderAt(n).text !== ctx.prayerReminderAt(0).text) n++;
+  return n;
+}
+
 (async () => {
   await harness1();
   await harness2();
@@ -1305,6 +1429,7 @@ async function harness9() {
   await harness7();
   await harness8();
   await harness9();
+  await harness10();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();

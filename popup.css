@@ -212,3 +212,59 @@ select {
 }
 .searchItem { padding: 8px 10px; cursor: pointer; font-size: 13px; border-radius: 6px; }
 .searchItem.hi, .searchItem:hover { background: var(--accent-tint); color: var(--accent-light); }
+
+/* ---- Prayer reminders ---------------------------------------------------- */
+/* Deliberately quiet: one muted line under the day, not a panel competing with the timer. */
+.prayerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+.prayerBox label {
+  display: block;
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.prayerToggle {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 !important;
+  color: var(--text-secondary) !important;
+  font-size: 13px !important;
+  cursor: pointer;
+}
+.prayerToggle input { margin: 0; }
+.prayerBox input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+.prayerPreview {
+  margin-top: 10px;
+  padding: 9px 11px;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.prayerTimes {
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.prayerWarn {
+  margin-top: 7px;
+  color: var(--danger-light);
+}
