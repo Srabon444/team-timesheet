@@ -1349,7 +1349,10 @@ async function harness10() {
   const a = ctx.prayerReminderAt(0), b = ctx.prayerReminderAt(1);
   A(a && a.text && a.source && a.text !== b.text, "reminders rotate rather than repeating");
   A(ctx.prayerReminderAt(-1).text === ctx.prayerReminderAt(PRAYER_COUNT_PROBE(ctx) - 1).text, "the rotation wraps on negatives too");
-  A(ctx.prayerNotificationText("Asr", a).title.startsWith("Asr"), "the notification names the prayer");
+  A(ctx.prayerNotificationText("Asr", a).title === "আসরের ওয়াক্ত হয়েছে", "the notification names the prayer in Bengali");
+  A(["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"].every((n) => ctx.prayerNotificationText(n, a).title !== n),
+    "every one of the five prayers has a Bengali heading");
+  A(ctx.prayerNotificationText("Sunrise", a).title === "Sunrise", "an unmapped name falls back instead of showing undefined");
 
   // --- the real path: background.js, with a day cached and the clock past Asr ---
   const today = new Date();
@@ -1398,7 +1401,7 @@ async function harness10() {
   notes.length = 0;
   listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
   await sleep(30);
-  A(notes.length === 1 && notes[0].title.startsWith("Maghrib"), "a prayer that is due right now fires exactly one notification");
+  A(notes.length === 1 && notes[0].title === "মাগরিবের ওয়াক্ত হয়েছে", "a prayer that is due right now fires exactly one notification");
   A(!!notes[0].message && notes[0].message.includes("—"), "the notification carries a reminder and its source");
 
   notes.length = 0;

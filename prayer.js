@@ -86,9 +86,12 @@ function prayerNext(times, nowMin) {
   return null;
 }
 
+//* Bengali, from prayer-hadiths.js. Falls back to the API's own name if a heading is ever
+//* missing, so an unmapped prayer still notifies rather than saying "undefined".
 function prayerNotificationText(name, reminder) {
+  const headings = typeof PRAYER_HEADINGS === "object" ? PRAYER_HEADINGS : {};
   return {
-    title: `${name} — time to pray`,
+    title: headings[name] || name,
     message: reminder ? `${reminder.text}\n— ${reminder.source}` : "",
   };
 }
