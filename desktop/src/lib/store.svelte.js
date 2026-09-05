@@ -16,6 +16,8 @@ import * as timer from "./timer.js";
 import { parseNames, parseDropdownOptions } from "./names.js";
 import { buildFillScript } from "./fillout-inject.js";
 import { gdBackupNow, gdSyncNow, timesheetIngest, gdConnected, gdConnect } from "./gdrive.js";
+import * as prayer from "./prayer.js";
+import { prayerReminderAt } from "./prayer-hadiths.js";
 
 function defaults() {
   return {
@@ -33,6 +35,7 @@ function defaults() {
     warnedDate: null,
     confirmBeforeDelete: true,
     theme: "dark",
+    prayer: prayer.prayerDefaults(),
   };
 }
 
@@ -87,6 +90,7 @@ export async function load() {
   save();
   startTick();
   listenForFillStatus();
+  ensurePrayerMonth().catch(() => {});
 }
 
 // ---------- timer / entry actions (persisting wrappers) ----------
@@ -242,6 +246,75 @@ async function maybeNotifyLimit() {
   }
 }
 
+// ---------- prayer reminders ----------
+//! Rides the existing 1s tick but only does work once a minute — prayer times have minute
+//! resolution, so a per-second check would just re-scan and re-save for nothing.
+let lastPrayerMinute = "";
+async function maybeNotifyPrayer() {
+  const p = app.data.prayer;
+  if (!p || !p.enabled) return;
+  const now = new Date();
+  const stamp = `${now.getHours()}:${now.getMinutes()}`;
+  if (stamp === lastPrayerMinute) return;
+  lastPrayerMinute = stamp;
+
+  const key = prayer.dayKey(now);
+  const times = (p.days || {})[key];
+  if (!times) return; // month cache missing or stale — ensurePrayerMonth() refreshes it
+
+  const doneToday = (p.notified || {})[key] || [];
+  const { due, stale } = prayer.duePrayers(times, now.getHours() * 60 + now.getMinutes(), doneToday);
+  if (!due.length && !stale.length) return;
+
+  let index = p.reminderIndex || 0;
+  if (due.length) {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === "granted";
+      if (granted) {
+        for (const name of due) sendNotification(prayer.notificationText(name, prayerReminderAt(index++)));
+      } else {
+        index += due.length; // keep the rotation moving even if the OS refused
+      }
+    } catch {
+      index += due.length;
+    }
+  }
+  //* Stale ones are recorded without a notification, so a machine that was asleep doesn't get a
+  //* burst of catch-up alerts the moment it wakes.
+  app.data.prayer = {
+    ...p,
+    notified: { ...(p.notified || {}), [key]: [...doneToday, ...due, ...stale] },
+    reminderIndex: index,
+  };
+  save();
+}
+
+// Refresh the cached month when it rolls over. Silent: a failure leaves the old cache in place.
+export async function ensurePrayerMonth() {
+  const p = app.data.prayer;
+  if (!p || !p.enabled || !p.city) return;
+  const key = prayer.monthKey(new Date());
+  if (p.month === key && Object.keys(p.days || {}).length) return;
+  try {
+    const fresh = await prayer.fetchMonth(p.city, p.country, p.method, p.school);
+    app.data.prayer = {
+      ...p,
+      ...fresh,
+      notified: prayer.pruneToMonth(p.notified, prayer.monthPrefix(new Date())),
+    };
+    save();
+  } catch (e) {
+    console.warn("prayer: month refresh failed", e);
+  }
+}
+
+export function savePrayerSettings(patch) {
+  app.data.prayer = { ...prayer.prayerDefaults(), ...(app.data.prayer || {}), ...patch };
+  lastPrayerMinute = ""; // re-evaluate on the next tick rather than waiting for the minute to turn
+  save();
+}
+
 let tickHandle = null;
 function startTick() {
   if (tickHandle) return;
@@ -249,6 +322,7 @@ function startTick() {
     app.now = Date.now();
     if (timer.rolloverIfNeeded(app.data)) save();
     maybeNotifyLimit();
+    maybeNotifyPrayer();
   }, 1000);
 }
 
