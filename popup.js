@@ -12,6 +12,7 @@ const DEFAULT_PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydrof
   "Prowork", "Rina CRM", "SME Taskhub", "VSB", "Worksite Mini ERP", "ZuPOS"];
 // Deployed in the timesheet-dashboard project (https://github.com/Srabon444/timesheet-dashboard).
 const INGEST_URL = "https://timesheet-dashboard-seven.vercel.app/api/ingest";
+const DASHBOARD_URL = "https://timesheet-dashboard-seven.vercel.app/";
 const DEFAULT_CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
 function currentProjects() { return (S.projects && S.projects.length) ? S.projects : DEFAULT_PROJECTS; }
@@ -1462,6 +1463,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if ($("todayBtn")) $("todayBtn").onclick = () => setViewDate(S.date);
   if ($("viewDateInput")) $("viewDateInput").onchange = (e) => setViewDate(e.target.value);
   $("finalSubmit").onclick = finalSubmit;
+  //* Present in both popup.html and tab.html, so one binding covers both views.
+  if ($("openDashboard")) $("openDashboard").onclick = () => chrome.tabs.create({ url: DASHBOARD_URL });
   if ($("prayerBtn")) {
     $("prayerBtn").onclick = openPrayerSettings;
     $("prayerCheck").onclick = prayerDoCheck;
