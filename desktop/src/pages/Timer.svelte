@@ -306,13 +306,19 @@
           {#if e.submitted}<span class="badge" style:background="var(--accent)">✓</span>{/if}
         </div>
       {/each}
+      <!--! A submitted day can't be re-filled without unmarking first — the Unmark button above is
+            the only escape, which is why its tombstone has to survive a Drive sync. -->
       <button
         class="btn primary submit-btn"
-        disabled={app.fill.running || entries.length === 0 || !app.data.name}
+        disabled={app.fill.running || entries.length === 0 || !app.data.name || !!selSubmitted}
+        title={selSubmitted ? "This day is marked submitted — unmark it first to re-fill the form." : ""}
         onclick={finalSubmit}
       >
         {app.fill.running ? "Filling…" : `Auto-fill ${entries.length} entr${entries.length === 1 ? "y" : "ies"} in Fillout`}
       </button>
+      {#if selSubmitted}
+        <p class="muted small">Marked submitted — unmark this day above to re-fill it.</p>
+      {/if}
       {#if app.fill.message}<p class="status-ok">{app.fill.message}</p>{/if}
       {#if app.fill.error}<p class="status-err">{app.fill.error}</p>{/if}
     </div>
