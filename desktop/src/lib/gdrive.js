@@ -5,6 +5,7 @@
 // logic as the extension's gdrive.js and drives it through invoke().
 import { invoke } from "@tauri-apps/api/core";
 import { app, save } from "./store.svelte.js";
+import * as timer from "./timer.js";
 
 const FOLDER = "Team Timesheet Backups";
 
@@ -136,15 +137,28 @@ async function findLatest(folderId) {
 // Runs gdSync first — never snapshots this device's raw local view, which
 // could be missing entries another device added while this one was offline;
 // throws rather than ever writing an empty snapshot.
-export async function gdBackupNow() {
-  await gdSync(true);
+//* sync=false for callers that already ran a sync of their own (mark submitted), so one click
+//* doesn't sweep every submitted day twice.
+export async function gdBackupNow(sync = true) {
+  if (sync) await gdSync(true);
   const folderId = await ensureFolder();
   const latest = await findLatest(folderId);
   if (!latest) throw new Error("Nothing to back up yet — add an entry first.");
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-  await createFile(folderId, `timesheet-${stamp}.json`, latest.content);
+  const name = `timesheet-${stamp}.json`;
+  //? Stamps are minute-resolution and Drive allows duplicate names, so two snapshots in one
+  //? minute produced two indistinguishable files. Overwrite the minute's snapshot instead.
+  const existing = await findByName(folderId, name);
+  if (existing) await updateFile(existing, latest.content);
+  else await createFile(folderId, name, latest.content);
+}
+
+async function findByName(folderId, name) {
+  const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
+  const j = await apiJson("GET", `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
+  return j.files && j.files.length ? j.files[0].id : null;
 }
 export async function gdListBackups() {
   const folderId = await ensureFolder();
@@ -194,8 +208,10 @@ export async function gdSync(interactive) {
       const list = mergedDays[date] || [];
       if (list.length) {
         const entries = list.map(e => ({
+          //! elapsedSec, not raw accSec — a running timer hasn't been folded in yet, so reading
+          //! it raw pushes the entry at its pre-start value.
           id: e.id, project: e.project || "", category: e.category || "",
-          description: e.description || "", seconds: Math.round(e.accSec || 0)
+          description: e.description || "", seconds: Math.round(timer.elapsedSec(app.data, e))
         }));
         await timesheetIngest(localObj.name, date, info.method, entries)
           .catch((e) => console.error("timesheetIngest failed for", date, e));
@@ -236,9 +252,18 @@ export async function gdSync(interactive) {
 
 // Debounced push after local edits.
 let syncTimer = null;
+let syncedAt = 0;
 export function gdSyncSoon() {
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => { gdSync(false).catch(() => {}); }, 2500);
+  syncTimer = setTimeout(() => { gdSyncNow().catch(() => {}); }, 2500);
+}
+//* Anything that must not be lost awaits this instead of arming the debounce. Both paths funnel
+//* through here so one change can't start two full sweeps — gdSync re-pushes every submitted day.
+export async function gdSyncNow() {
+  if (Date.now() - syncedAt < 3000) { gdSyncSoon(); return ""; } // too soon — re-arm, never drop
+  clearTimeout(syncTimer);
+  syncedAt = Date.now();
+  try { return await gdSync(false); } finally { syncedAt = Date.now(); }
 }
 
 export async function timesheetIngest(name, date, method, entries) {
