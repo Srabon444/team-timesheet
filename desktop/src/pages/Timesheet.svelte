@@ -23,7 +23,9 @@
 
 {#each dates as d}
   {@const entries = app.data.days[d] || []}
-  <section class="day" class:istoday={d === today} onclick={() => goToDate(d)} role="button" tabindex="0">
+  <section class="day" class:istoday={d === today} role="button" tabindex="0"
+           onclick={() => goToDate(d)}
+           onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goToDate(d); } }}>
     <header>
       <span class="dlabel">{dayLabel(d).dow} <span class="muted">{dayLabel(d).md}</span>
         {#if d === today}<span class="today">Today</span>{/if}
