@@ -12,6 +12,7 @@
   import AddEntryModal from "../components/AddEntryModal.svelte";
   import CopyToModal from "../components/CopyToModal.svelte";
   import PrayerModal from "../components/PrayerModal.svelte";
+  import SearchSelect from "../components/SearchSelect.svelte";
   import * as prayer from "../lib/prayer.js";
 
   let selected = $state(nav.jumpDate || todayStr());
@@ -63,7 +64,7 @@
   });
   const selSubmitted = $derived(daySubmitted(selected));
 
-  //* Subtle by design: one muted line, no panel. Reads app.now so the countdown stays live.
+  //* Reads app.now so the countdown stays live.
   let prayerOpen = $state(false);
   const prayerLine = $derived.by(() => {
     const p = app.data.prayer;
@@ -303,11 +304,14 @@
 
     <div class="submit-panel">
       <h2>Submit to Fillout</h2>
-      <label for="subname">Your name</label>
-      <select id="subname" bind:value={app.data.name} onchange={save}>
-        <option value="" disabled>Pick your name…</option>
-        {#each app.data.names as n}<option value={n}>{n}</option>{/each}
-      </select>
+      <span class="fieldlbl">Your name</span>
+      <SearchSelect
+        items={app.data.names}
+        value={app.data.name}
+        placeholder="Pick your name…"
+        disabled={!app.data.names.length}
+        onpick={(n) => { app.data.name = n; save(); }}
+      />
       {#if !app.data.names.length}
         <p class="muted small">No names loaded yet — fetch them in Settings.</p>
       {/if}
@@ -342,14 +346,17 @@
   </div>
 {/if}
 
-<!--* Outside the tab block on purpose — it belongs to the page, not to one tab. Subtle by
-     design: one muted line at the foot, no panel. -->
-<div class="prayer-row">
-  <button class="link" onclick={() => (prayerOpen = true)}>
-    🕌 {app.data.prayer?.enabled && app.data.prayer?.city ? app.data.prayer.city : "Namaj Time"}
-  </button>
-  {#if prayerLine}<span class="muted small">{prayerLine}</span>{/if}
-</div>
+<!--* Outside the tab block on purpose — it belongs to the page, not to one tab. -->
+<button class="prayer-btn" class:on={app.data.prayer?.enabled && app.data.prayer?.city}
+        onclick={() => (prayerOpen = true)}>
+  <span class="prayer-icon">🕌</span>
+  <span class="prayer-text">
+    <span class="prayer-title">
+      {app.data.prayer?.enabled && app.data.prayer?.city ? app.data.prayer.city : "Namaj Time"}
+    </span>
+    <span class="prayer-sub">{prayerLine || "Set your city to get prayer reminders"}</span>
+  </span>
+</button>
 
 {#if modal}
   <AddEntryModal
@@ -361,12 +368,12 @@
   />
 {/if}
 
-{#if copyModalOpen}
-  <CopyToModal minDate={today} onclose={() => (copyModalOpen = false)} onconfirm={copyToTarget} />
-{/if}
-
 {#if prayerOpen}
   <PrayerModal onclose={() => (prayerOpen = false)} />
+{/if}
+
+{#if copyModalOpen}
+  <CopyToModal minDate={today} onclose={() => (copyModalOpen = false)} onconfirm={copyToTarget} />
 {/if}
 
 <style>
@@ -487,11 +494,23 @@
 
   .empty { text-align: center; padding: 60px 0; }
 
-  .prayer-row {
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-    margin-top: 14px; padding-top: 12px;
-    border-top: 1px solid var(--border-color);
+  .prayer-btn {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    margin-top: 22px; padding: 13px 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-primary); text-align: left; cursor: pointer;
+    transition: border-color .15s, background .15s;
   }
+  .prayer-btn:hover { border-color: var(--accent); background: var(--accent-tint); }
+  /*! Highlighted only once it is actually set up — an unconfigured button shouting for attention
+      next to the timer is exactly the crowding this feature was meant to avoid. */
+  .prayer-btn.on { border-color: var(--accent); }
+  .prayer-icon { font-size: 26px; line-height: 1; flex: none; }
+  .prayer-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .prayer-title { font-size: 15px; font-weight: 600; }
+  .prayer-sub { font-size: 12.5px; color: var(--text-muted); }
 
   .rows { display: flex; flex-direction: column; gap: 10px; }
   .row {
@@ -543,6 +562,9 @@
   .btn.tiny { padding: 5px 10px; font-size: 12.5px; }
 
   .submit-panel { margin-top: 26px; }
+  /*? A span, not a <label>: SearchSelect owns its own input, so there is no id here to point a
+      label's `for` at. */
+  .fieldlbl { display: block; margin: 12px 0 5px; font-size: 12.5px; color: var(--text-muted); }
   .small { font-size: 12.5px; }
   .preview-row {
     display: flex; align-items: center; gap: 10px;
