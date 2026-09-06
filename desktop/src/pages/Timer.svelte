@@ -14,6 +14,7 @@
   import PrayerModal from "../components/PrayerModal.svelte";
   import SearchSelect from "../components/SearchSelect.svelte";
   import * as prayer from "../lib/prayer.js";
+  import { prayerReminderAt } from "../lib/prayer-hadiths.js";
 
   let selected = $state(nav.jumpDate || todayStr());
   let anchor = $state(nav.jumpDate || todayStr()); // day-strip window end
@@ -74,6 +75,14 @@
     const times = (p.days || {})[prayer.dayKey(now)];
     if (!times) return "times unavailable";
     return prayer.statusLine(times, now.getHours() * 60 + now.getMinutes()) || "times unavailable";
+  });
+
+  //* The reminder the next notification will carry — same rotation, so the card previews it.
+  const prayerHadith = $derived.by(() => {
+    const p = app.data.prayer;
+    if (!p || !p.enabled || !p.city) return "";
+    const r = prayerReminderAt(p.reminderIndex || 0);
+    return r ? `${r.text} — ${r.source}` : "";
   });
 
   function stripTotal(date) {
@@ -352,6 +361,7 @@
       {app.data.prayer?.enabled && app.data.prayer?.city ? app.data.prayer.city : "Namaj Time"}
     </span>
     <span class="prayer-sub">{prayerLine || "Set your city to get prayer reminders"}</span>
+    {#if prayerHadith}<span class="prayer-hadith">{prayerHadith}</span>{/if}
   </span>
 </button>
 
@@ -508,6 +518,11 @@
   .prayer-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .prayer-title { font-size: 15px; font-weight: 600; }
   .prayer-sub { font-size: 12.5px; color: var(--text-muted); }
+  /*! Clamped to two lines: some reminders are long and the card must not push the timer down. */
+  .prayer-hadith {
+    font-size: 11.5px; line-height: 1.45; color: var(--text-muted); margin-top: 3px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
 
   .rows { display: flex; flex-direction: column; gap: 10px; }
   .row {
