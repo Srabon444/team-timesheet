@@ -866,16 +866,18 @@ function prayerFmtIn(min) {
 }
 
 async function renderPrayerRow() {
-  if (!$("prayerRow") || typeof prayerLoad !== "function") return;
+  if (!$("prayerBtn") || typeof prayerLoad !== "function") return;
   const p = await prayerLoad();
-  const btn = $("prayerBtn");
+  const on = !!(p.enabled && p.city);
+  //! Highlighted only once it is actually set up — an unconfigured button shouting for attention
+  //! next to the timer is exactly the crowding this feature was meant to avoid.
+  $("prayerBtn").classList.toggle("on", on);
+  $("prayerTitle").textContent = on ? p.city : "Namaj Time";
   const label = $("prayerNext");
-  if (!p.enabled || !p.city) {
-    btn.textContent = "🕌 Namaj Time";
-    label.textContent = "";
+  if (!on) {
+    label.textContent = "Set your city to get prayer reminders";
     return;
   }
-  btn.textContent = `🕌 ${p.city}`;
   const times = (p.days || {})[todayStr()];
   if (!times) {
     label.textContent = "times unavailable";
