@@ -160,7 +160,7 @@
 {/if}
 
 <div class="timer-head">
-  <div class="big-wrap" onmouseenter={enterMenu} onmouseleave={leaveMenu}>
+  <div class="big-wrap" role="group" onmouseenter={enterMenu} onmouseleave={leaveMenu}>
     <div class="big mono">{running ? secToHHMMSS(entryElapsed(running)) : "00:00:00"}</div>
     <!-- Hover or click to quick-add: pick a project, then a category. -->
     <button class="quickadd" class:on={menuOpen} onclick={toggleMenu} aria-label="Quick add a task">

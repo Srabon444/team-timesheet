@@ -21,9 +21,10 @@
   }
 </script>
 
-<div class="overlay" role="dialog" onkeydown={onkeydown}>
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="copy-to-title"
+     tabindex="-1" onkeydown={onkeydown}>
   <div class="box">
-    <h3>Copy to</h3>
+    <h3 id="copy-to-title">Copy to</h3>
     <label for="copyDate">Target date</label>
     <input id="copyDate" type="date" min={minDate} bind:value={target} />
     {#if error}<p class="status-err">{error}</p>{/if}
