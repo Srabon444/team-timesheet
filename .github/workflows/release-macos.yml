@@ -89,6 +89,10 @@ jobs:
             '.[] | select(.tagName | startswith("macos-v")) | .tagName' \
             | while read -r t; do
                 if [ -n "$t" ] && [ "$t" != "$KEEP" ]; then
-                  gh release delete "$t" --yes --cleanup-tag
+                  #! --cleanup-tag hard-fails when the tag ref is already gone -- a cancelled run
+                  #! can leave a release whose tag was already removed -- and `bash -e` then kills
+                  #! the whole cleanup mid-loop, stranding every older release behind it.
+                  gh release delete "$t" --yes || true
+                  gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$t" >/dev/null 2>&1 || true
                 fi
               done
