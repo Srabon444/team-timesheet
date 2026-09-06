@@ -338,16 +338,18 @@
       {/if}
       {#if app.fill.message}<p class="status-ok">{app.fill.message}</p>{/if}
       {#if app.fill.error}<p class="status-err">{app.fill.error}</p>{/if}
-
-      <div class="prayer-row">
-        <button class="link" onclick={() => (prayerOpen = true)}>
-          🕌 {app.data.prayer?.enabled && app.data.prayer?.city ? app.data.prayer.city : "Namaj Time"}
-        </button>
-        {#if prayerLine}<span class="muted small">{prayerLine}</span>{/if}
-      </div>
     </div>
   </div>
 {/if}
+
+<!--* Outside the tab block on purpose — it belongs to the page, not to one tab. Subtle by
+     design: one muted line at the foot, no panel. -->
+<div class="prayer-row">
+  <button class="link" onclick={() => (prayerOpen = true)}>
+    🕌 {app.data.prayer?.enabled && app.data.prayer?.city ? app.data.prayer.city : "Namaj Time"}
+  </button>
+  {#if prayerLine}<span class="muted small">{prayerLine}</span>{/if}
+</div>
 
 {#if modal}
   <AddEntryModal
