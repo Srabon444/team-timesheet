@@ -1,9 +1,15 @@
 <script>
   import { app, save, applyTheme, fetchNames, fetchProjectsAndCategories, showConfirm } from "../lib/store.svelte.js";
   import { gdConnected, gdConnect, gdDisconnect, gdSync, gdBackupNow, gdListBackups, gdRestoreFile } from "../lib/gdrive.js";
+  import PrayerModal from "../components/PrayerModal.svelte";
+  import SearchSelect from "../components/SearchSelect.svelte";
 
   let fetching = $state(false);
   let fetchMsg = $state("");
+
+  //* Prayer setup reuses the same modal the Timer page opens — one config UI, two doors into it,
+  //* rather than a second copy of the form to keep in step.
+  let prayerOpen = $state(false);
 
   async function loadNames() {
     fetching = true;
@@ -160,10 +166,13 @@
 <section>
   <h2>Your name</h2>
   <div class="row-inline">
-    <select bind:value={app.data.name} onchange={save} disabled={!app.data.names.length}>
-      <option value="" disabled>Pick your name…</option>
-      {#each app.data.names as n}<option value={n}>{n}</option>{/each}
-    </select>
+    <SearchSelect
+      items={app.data.names}
+      value={app.data.name}
+      placeholder="Pick your name…"
+      disabled={!app.data.names.length}
+      onpick={(n) => { app.data.name = n; save(); }}
+    />
     <button class="btn" onclick={loadNames} disabled={fetching}>
       {fetching ? "Fetching…" : app.data.names.length ? "Refresh names" : "Fetch names from form"}
     </button>
@@ -263,6 +272,23 @@
   {#if gdMsg}<p class="muted small">{gdMsg}</p>{/if}
 </section>
 
+<section>
+  <h2>Prayer times</h2>
+  <p class="muted small">A notification at each of the five daily prayers, with a short reminder.
+    Times are fetched a month at a time and cached, so they keep working offline. Karachi method,
+    Hanafi Asr.</p>
+  <p class="muted small">
+    {#if app.data.prayer?.enabled && app.data.prayer?.city}
+      On — {app.data.prayer.city}{app.data.prayer.country ? ", " + app.data.prayer.country : ""}.
+    {:else}
+      Off.
+    {/if}
+  </p>
+  <button class="btn" onclick={() => (prayerOpen = true)}>
+    {app.data.prayer?.city ? "Change prayer times" : "Set up prayer times"}
+  </button>
+</section>
+
 <section class="danger">
   <div class="setrow">
     <div>
@@ -272,6 +298,10 @@
     <button class="btn danger" onclick={resetEverything}>Reset</button>
   </div>
 </section>
+
+{#if prayerOpen}
+  <PrayerModal onclose={() => (prayerOpen = false)} />
+{/if}
 
 <style>
   section { max-width: 640px; margin-top: 26px; }
