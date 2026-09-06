@@ -144,6 +144,12 @@ describe("reminders", () => {
     }
   });
 
+  it("carries the whole hadith and its source in the notification body", () => {
+    const r = prayerReminderAt(3);
+    const n = notificationText("Asr", r);
+    expect(n.body).toBe(`${r.text}\n— ${r.source}`);
+  });
+
   it("names the prayer in Bengali in the notification title", () => {
     const n = notificationText("Maghrib", prayerReminderAt(0));
     expect(n.title).toBe("মাগরিবের ওয়াক্ত হয়েছে");
