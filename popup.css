@@ -230,6 +230,11 @@ select {
   cursor: pointer;
   transition: border-color .15s, background .15s;
 }
+/*! Clamped to two lines: some reminders are long and the card must not push the timer down. */
+.prayerHadith {
+  font-size: 11.5px; line-height: 1.45; color: var(--text-muted); margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .prayerBtn:hover { border-color: var(--accent); background: var(--accent-tint); }
 .prayerBtn.on { border-color: var(--accent); }
 .prayerIcon { font-size: 24px; line-height: 1; flex: none; }

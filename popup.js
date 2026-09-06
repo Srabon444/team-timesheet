@@ -871,6 +871,10 @@ async function renderPrayerRow() {
   $("prayerBtn").classList.toggle("on", on);
   $("prayerTitle").textContent = on ? p.city : "Namaj Time";
   const label = $("prayerNext");
+  //* The reminder the next notification will carry — same rotation, so the card previews it.
+  const hadith = $("prayerHadith");
+  const r = on && typeof prayerReminderAt === "function" ? prayerReminderAt(p.reminderIndex || 0) : null;
+  hadith.textContent = r ? `${r.text} — ${r.source}` : "";
   if (!on) {
     label.textContent = "Set your city to get prayer reminders";
     return;

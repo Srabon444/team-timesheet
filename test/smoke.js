@@ -1413,7 +1413,9 @@ async function harness10() {
   listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
   await sleep(30);
   A(notes.length === 1 && notes[0].title === "মাগরিবের ওয়াক্ত হয়েছে", "a prayer that is due right now fires exactly one notification");
-  A(!!notes[0].message && notes[0].message.includes("—"), "the notification carries a reminder and its source");
+  const shown = ctx.prayerReminderAt(0);
+  A(notes[0].message === `${shown.text}\n— ${shown.source}`,
+    "the notification carries the whole hadith and its source, not a truncated one");
 
   notes.length = 0;
   listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
