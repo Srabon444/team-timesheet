@@ -1341,6 +1341,17 @@ async function harness10() {
   A(ctx.prayerNext(five, 12 * 60).name === "Asr", "next-prayer lookup skips the ones already passed");
   A(ctx.prayerNext(five, 20 * 60) === null, "after Isha there is no next prayer today");
 
+  A(ctx.prayerStatusLine(five, 12 * 60 + 53) === "Dhuhr 2hr 34min remaining, Asr: 3:27 PM",
+    "the status line names the running prayer's time left and the next prayer's clock time");
+  A(ctx.prayerStatusLine(five, 2 * 60) === "Fajr: 4:23 AM",
+    "before the first prayer the current half and its comma are both dropped");
+  A(ctx.prayerStatusLine(five, 21 * 60) === "Isha now",
+    "after the last prayer the next half and its comma are both dropped");
+  A(ctx.prayerStatusLine(five, 15 * 60) === "Dhuhr 27min remaining, Asr: 3:27 PM",
+    "under an hour left drops the hour part");
+  A(ctx.prayerStatusLine({}, 12 * 60) === "", "no times at all yields nothing, not a bare comma");
+  A(ctx.prayerStatusLine({ Dhuhr: "12:05" }, 0).endsWith("12:05 PM"), "noon renders as 12 PM, not 0 PM");
+
   const cal = ctx.prayerIndexCalendar([{ date: { gregorian: { date: "01-09-2026" } }, timings: raw }]);
   A(Object.keys(cal)[0] === "2026-09-01", "the API's DD-MM-YYYY date is flipped to YYYY-MM-DD");
   A(Object.keys(ctx.prayerPruneToMonth({ "2026-08-31": 1, "2026-09-01": 2 }, "2026-09")).join() === "2026-09-01",

@@ -86,6 +86,41 @@ function prayerNext(times, nowMin) {
   return null;
 }
 
+// The prayer whose waqt is running now: the last one whose time has already come today.
+function prayerCurrent(times, nowMin) {
+  let cur = null;
+  for (const name of PRAYER_NAMES) {
+    const at = prayerToMinutes((times || {})[name]);
+    if (at !== null && at <= nowMin) cur = { name, at };
+  }
+  return cur;
+}
+
+// "15:27" -> "3:27 PM"
+function prayerFmt12(hhmm) {
+  const m = prayerToMinutes(hhmm);
+  if (m === null) return "";
+  const h = Math.floor(m / 60);
+  return `${((h + 11) % 12) + 1}:${String(m % 60).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+function prayerFmtLeft(min) {
+  const h = Math.floor(min / 60);
+  return h ? `${h}hr ${min % 60}min` : `${min}min`;
+}
+
+// "Dhuhr 2hr 34min remaining, Asr: 3:27 PM".
+//! Either half is dropped when it doesn't exist — before Fajr there is no current prayer, after
+//! Isha there is no next one — and the comma goes with the half it separated.
+function prayerStatusLine(times, nowMin) {
+  const cur = prayerCurrent(times, nowMin);
+  const next = prayerNext(times, nowMin);
+  const parts = [];
+  if (cur) parts.push(next ? `${cur.name} ${prayerFmtLeft(next.at - nowMin)} remaining` : `${cur.name} now`);
+  if (next) parts.push(`${next.name}: ${prayerFmt12(times[next.name])}`);
+  return parts.join(", ");
+}
+
 //* Bengali, from prayer-hadiths.js. Falls back to the API's own name if a heading is ever
 //* missing, so an unmapped prayer still notifies rather than saying "undefined".
 function prayerNotificationText(name, reminder) {

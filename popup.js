@@ -211,6 +211,8 @@ async function init() {
   if (typeof gdSync === "function") gdSync(false).catch(() => {});
   //* Refreshes the cached month when it rolls over; a no-op the rest of the time.
   if (typeof prayerEnsureMonth === "function") prayerEnsureMonth().then(renderPrayerRow).catch(() => {});
+  //! The row shows a countdown, so it goes stale in tab.html, which stays open all day.
+  setInterval(renderPrayerRow, 60000);
   // Keep Names/Project/Category in sync with the live form on every open
   // instead of requiring a manual click — same silent-refresh idea as gdSync above.
   loadNames(true).catch(() => {});
@@ -860,11 +862,6 @@ async function gdSyncNow() {
 //! typeof-guarded the same way the Drive calls are.
 let prayerVerified = null; // a city the API has actually answered for, this session
 
-function prayerFmtIn(min) {
-  const h = Math.floor(min / 60);
-  return h ? `${h}h ${min % 60}m` : `${min}m`;
-}
-
 async function renderPrayerRow() {
   if (!$("prayerBtn") || typeof prayerLoad !== "function") return;
   const p = await prayerLoad();
@@ -884,10 +881,7 @@ async function renderPrayerRow() {
     return;
   }
   const now = new Date();
-  const next = prayerNext(times, now.getHours() * 60 + now.getMinutes());
-  label.textContent = next
-    ? `${next.name} ${times[next.name]} · in ${prayerFmtIn(next.inMin)}`
-    : "all prayers done for today";
+  label.textContent = prayerStatusLine(times, now.getHours() * 60 + now.getMinutes()) || "times unavailable";
 }
 
 async function openPrayerSettings() {
