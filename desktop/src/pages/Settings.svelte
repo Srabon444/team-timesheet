@@ -306,7 +306,6 @@
 <style>
   section { max-width: 640px; margin-top: 26px; }
   .row-inline { display: flex; gap: 10px; align-items: center; }
-  .row-inline select { flex: 1; }
   .small { font-size: 12.5px; margin-top: 8px; }
   .setrow {
     display: flex; justify-content: space-between; align-items: center; gap: 20px;

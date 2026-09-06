@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from "svelte";
   import { todayStr, hhmmToSec } from "../lib/time.js";
   import {
     app, addEntry, updateEntry, removeEntry,
@@ -10,20 +11,22 @@
   // controls visibility. Presets come from the header timer's hover menu.
   let { date, entry = null, presetProject = "", presetCategory = "", onclose } = $props();
 
-  const dayEntries = app.data.days[date] || [];
+  //! The modal is mounted fresh on every open, so reading the props once here is deliberate.
+  //! untrack() states that; without it Svelte flags each read as a missed reactive dependency.
+  const dayEntries = untrack(() => app.data.days[date] || []);
   const lastForDay = dayEntries.length ? dayEntries[dayEntries.length - 1] : null;
-  const canStartTimer = date === todayStr();
+  const canStartTimer = untrack(() => date === todayStr());
 
   // First task of a day starts blank (forces a deliberate pick); once the
   // day has an entry, later Adds preselect that day's most recent project.
   // A preset (hover-menu pick) wins over both.
-  let project = $state(entry ? entry.project : (presetProject || (lastForDay ? lastForDay.project : "")));
-  let category = $state(entry ? entry.category : (presetCategory || (lastForDay ? lastForDay.category : currentCategories()[2])));
-  let description = $state(entry ? entry.description : "");
+  let project = $state(untrack(() => entry ? entry.project : (presetProject || (lastForDay ? lastForDay.project : ""))));
+  let category = $state(untrack(() => entry ? entry.category : (presetCategory || (lastForDay ? lastForDay.category : currentCategories()[2]))));
+  let description = $state(untrack(() => (entry ? entry.description : "")));
   // Seed from the entry's LIVE elapsed (not just accSec), so editing a
   // running task shows the real running time — the fix for elapsed getting
   // reset when you edit a task mid-run.
-  const startSec = Math.round(entry ? entryElapsed(entry) : 0);
+  const startSec = untrack(() => Math.round(entry ? entryElapsed(entry) : 0));
   let hrs = $state(Math.floor(startSec / 3600));
   let mins = $state(Math.floor((startSec % 3600) / 60));
   let error = $state("");
