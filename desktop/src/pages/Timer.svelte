@@ -73,10 +73,7 @@
     const now = new Date();
     const times = (p.days || {})[prayer.dayKey(now)];
     if (!times) return "times unavailable";
-    const next = prayer.nextPrayer(times, now.getHours() * 60 + now.getMinutes());
-    if (!next) return "all prayers done for today";
-    const h = Math.floor(next.inMin / 60);
-    return `${next.name} ${times[next.name]} · in ${h ? h + "h " : ""}${next.inMin % 60}m`;
+    return prayer.statusLine(times, now.getHours() * 60 + now.getMinutes()) || "times unavailable";
   });
 
   function stripTotal(date) {
