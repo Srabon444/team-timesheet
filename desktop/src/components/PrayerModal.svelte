@@ -78,9 +78,10 @@
   }
 </script>
 
-<div class="overlay" role="dialog" onkeydown={onkeydown}>
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="prayer-title"
+     tabindex="-1" onkeydown={onkeydown}>
   <div class="box">
-    <h3>Prayer time reminders</h3>
+    <h3 id="prayer-title">Prayer time reminders</h3>
     <label class="toggle">
       <input type="checkbox" bind:checked={enabled} />
       <span>Notify me at each prayer time</span>
