@@ -84,6 +84,41 @@ export function nextPrayer(times, nowMin) {
   return null;
 }
 
+// The prayer whose waqt is running now: the last one whose time has already come today.
+export function currentPrayer(times, nowMin) {
+  let cur = null;
+  for (const name of PRAYER_NAMES) {
+    const at = toMinutes((times || {})[name]);
+    if (at !== null && at <= nowMin) cur = { name, at };
+  }
+  return cur;
+}
+
+// "15:27" -> "3:27 PM"
+export function fmt12(hhmm) {
+  const m = toMinutes(hhmm);
+  if (m === null) return "";
+  const h = Math.floor(m / 60);
+  return `${((h + 11) % 12) + 1}:${String(m % 60).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+export function fmtLeft(min) {
+  const h = Math.floor(min / 60);
+  return h ? `${h}hr ${min % 60}min` : `${min}min`;
+}
+
+// "Dhuhr 2hr 34min remaining, Asr: 3:27 PM".
+//! Either half is dropped when it doesn't exist — before Fajr there is no current prayer, after
+//! Isha there is no next one — and the comma goes with the half it separated.
+export function statusLine(times, nowMin) {
+  const cur = currentPrayer(times, nowMin);
+  const next = nextPrayer(times, nowMin);
+  const parts = [];
+  if (cur) parts.push(next ? `${cur.name} ${fmtLeft(next.at - nowMin)} remaining` : `${cur.name} now`);
+  if (next) parts.push(`${next.name}: ${fmt12(times[next.name])}`);
+  return parts.join(", ");
+}
+
 //* Bengali headings; falls back to the API's own name so a missing one can't read "undefined".
 export function notificationText(name, reminder) {
   return {

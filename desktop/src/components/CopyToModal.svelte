@@ -1,9 +1,11 @@
 <script>
+  import { untrack } from "svelte";
   // { minDate: "YYYY-MM-DD", onclose, onconfirm(targetDate) } — parent owns
   // the selected-entries set and does the actual copying.
   let { minDate, onclose, onconfirm } = $props();
 
-  let target = $state(minDate);
+  //! Seeded once on open, deliberately — untrack() keeps the compiler from reading it as a bug.
+  let target = $state(untrack(() => minDate));
   let error = $state("");
 
   function confirm() {
