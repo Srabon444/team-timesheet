@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   pickFive, toMinutes, duePrayers, nextPrayer, indexCalendar, pruneToMonth,
-  notificationText, dayKey, monthPrefix,
+  notificationText, dayKey, monthPrefix, statusLine,
 } from "../src/lib/prayer.js";
 import { prayerReminderAt, PRAYER_REMINDERS, PRAYER_HEADINGS } from "../src/lib/prayer-hadiths.js";
 
@@ -69,6 +69,34 @@ describe("nextPrayer", () => {
 
   it("returns null once Isha has passed", () => {
     expect(nextPrayer(five, 20 * 60)).toBeNull();
+  });
+});
+
+describe("statusLine", () => {
+  it("names the running prayer with its time left, then the next one", () => {
+    // 12:53 — Dhuhr started at 11:58, Asr comes at 15:27.
+    expect(statusLine(five, 12 * 60 + 53)).toBe("Dhuhr 2hr 34min remaining, Asr: 3:27 PM");
+  });
+
+  it("drops the current half AND its comma before the first prayer of the day", () => {
+    expect(statusLine(five, 2 * 60)).toBe("Fajr: 4:23 AM");
+  });
+
+  it("drops the next half AND its comma after the last prayer of the day", () => {
+    expect(statusLine(five, 21 * 60)).toBe("Isha now");
+  });
+
+  it("omits the hour when under an hour is left", () => {
+    expect(statusLine(five, 15 * 60)).toBe("Dhuhr 27min remaining, Asr: 3:27 PM");
+  });
+
+  it("returns empty rather than a bare comma when there are no times at all", () => {
+    expect(statusLine({}, 12 * 60)).toBe("");
+  });
+
+  it("renders midnight and noon as 12, not 0", () => {
+    expect(statusLine({ Fajr: "00:10" }, 0).endsWith("12:10 AM")).toBe(true);
+    expect(statusLine({ Dhuhr: "12:05" }, 0).endsWith("12:05 PM")).toBe(true);
   });
 });
 
