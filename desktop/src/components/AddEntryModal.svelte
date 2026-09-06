@@ -72,9 +72,10 @@
   }
 </script>
 
-<div class="overlay" role="dialog" onkeydown={onkeydown}>
+<div class="overlay" role="dialog" aria-modal="true" aria-labelledby="add-entry-title"
+     tabindex="-1" onkeydown={onkeydown}>
   <div class="box">
-    <h3>{entry ? "Task Details" : "Add task"}</h3>
+    <h3 id="add-entry-title">{entry ? "Task Details" : "Add task"}</h3>
 
     <label for="proj">Project</label>
     <div class="proj-wrap">
@@ -96,9 +97,9 @@
     <!-- svelte-ignore a11y_autofocus -->
     <input id="desc" type="text" bind:value={description} placeholder="What are you working on?" autofocus />
 
-    <label>Time Clocked</label>
+    <label for="hrs">Time Clocked</label>
     <div class="timepick">
-      <select bind:value={hrs} aria-label="Hours">
+      <select id="hrs" bind:value={hrs} aria-label="Hours">
         {#each Array.from({ length: 24 }, (_, h) => h) as h}<option value={h}>{String(h).padStart(2, "0")} hrs</option>{/each}
       </select>
       <span class="colon">:</span>
