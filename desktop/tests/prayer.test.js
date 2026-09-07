@@ -3,8 +3,9 @@
 // machine wakes up.
 import { describe, it, expect } from "vitest";
 import {
-  pickTimes, toMinutes, duePrayers, nextPrayer, currentPrayer, waqtEnd, indexCalendar,
-  pruneToMonth, notificationText, dayKey, monthPrefix, statusLine,
+  pickTimes, toMinutes, duePrayers, nextPrayer, currentPrayer, waqtEnd, asrMakruhStart,
+  endingWarnings, endingText, indexCalendar, pruneToMonth, notificationText, dayKey,
+  monthPrefix, statusLine,
 } from "../src/lib/prayer.js";
 import { prayerReminderAt, PRAYER_REMINDERS, PRAYER_HEADINGS } from "../src/lib/prayer-hadiths.js";
 
@@ -42,7 +43,12 @@ describe("waqtEnd", () => {
     expect(waqtEnd(five, "Fajr")).toBe(5 * 60 + 30); // sunrise 05:40
   });
 
-  it("ends Asr at Maghrib", () => expect(waqtEnd(five, "Asr")).toBe(18 * 60 + 17));
+  it("ends Asr ten minutes before Maghrib", () => expect(waqtEnd(five, "Asr")).toBe(18 * 60 + 7));
+
+  it("returns null rather than a 24-hour waqt when the boundary precedes the prayer", () => {
+    // A polar sunrise minutes after Fajr — degenerate, and only Isha may legitimately wrap.
+    expect(waqtEnd({ Fajr: "04:23", Sunrise: "04:25" }, "Fajr")).toBeNull();
+  });
 
   it("ends Isha at Islamic midnight", () => expect(waqtEnd(five, "Isha")).toBe(23 * 60 + 58));
 
@@ -52,6 +58,83 @@ describe("waqtEnd", () => {
 
   it("returns null rather than a guess when the boundary was never cached", () => {
     expect(waqtEnd({ Fajr: "04:23" }, "Fajr")).toBeNull();
+  });
+});
+
+describe("asrMakruhStart", () => {
+  it("starts twenty minutes before Maghrib", () => {
+    expect(asrMakruhStart(five)).toBe(17 * 60 + 57);
+  });
+
+  it("flags the running prayer as makruh only inside that window", () => {
+    expect(currentPrayer(five, 17 * 60 + 50).makruh).toBe(false);
+    expect(currentPrayer(five, 17 * 60 + 58).makruh).toBe(true);
+  });
+
+  it("says so in the status line", () => {
+    expect(statusLine(five, 17 * 60 + 58)).toBe("Asr 9min remaining (makruh), Maghrib: 6:17 PM");
+  });
+});
+
+describe("endingWarnings", () => {
+  // Asr ends at 18:07 (Maghrib 18:17 less the margin), so the leads land at 17:37 and 17:52.
+  it("fires the 30-minute lead on its minute", () => {
+    const { due } = endingWarnings(five, 17 * 60 + 37, []);
+    expect(due.map((d) => d.mark)).toEqual(["Asr:30"]);
+    expect(due[0].leftMin).toBe(30);
+  });
+
+  it("reports the real minutes left, not the lead, when it fires late", () => {
+    const { due } = endingWarnings(five, 17 * 60 + 45, []);
+    expect(due[0].mark).toBe("Asr:30");
+    expect(due[0].leftMin).toBe(22);
+  });
+
+  it("never warns about a waqt that has already expired", () => {
+    expect(endingWarnings(five, 18 * 60 + 10, []).due).toEqual([]);
+    //! Still true with a grace window wider than the lead, which is the only way this guard is
+    //! reachable — without it a generous grace would announce "minutes left" after the end.
+    expect(endingWarnings(five, 18 * 60 + 10, [], 60).due).toEqual([]);
+  });
+
+  it("never warns about a prayer that has not started", () => {
+    expect(endingWarnings(five, 3 * 60, []).due).toEqual([]);
+  });
+
+  it("silences a warning long past its window instead of firing it on wake-up", () => {
+    const { due, stale } = endingWarnings(five, 18 * 60 + 5, []);
+    expect(due).toEqual([]);
+    expect(stale).toContain("Asr:30");
+  });
+
+  it("does not repeat a warning already sent", () => {
+    expect(endingWarnings(five, 17 * 60 + 37, ["Asr:30"]).due).toEqual([]);
+  });
+
+  it("keeps its marks distinct from the start notification's", () => {
+    // "Asr" must not silence "Asr:30", nor the reverse.
+    expect(endingWarnings(five, 17 * 60 + 37, ["Asr"]).due.map((d) => d.mark)).toEqual(["Asr:30"]);
+    expect(duePrayers(five, 15 * 60 + 27, ["Asr:30"]).due).toEqual(["Asr"]);
+  });
+
+  it("marks the warning makruh once Asr is in that window", () => {
+    expect(endingWarnings(five, 17 * 60 + 58, []).due[0].makruh).toBe(true);
+  });
+});
+
+describe("endingText", () => {
+  it("names the prayer in Bengali and counts down in Bengali digits", () => {
+    const n = endingText({ name: "Asr", mark: "Asr:15", leftMin: 15, makruh: false });
+    expect(n.title).toBe("আসরের ওয়াক্ত শেষ হয়ে আসছে");
+    expect(n.body).toBe("আর ১৫ মিনিট বাকি");
+  });
+
+  it("says makruh when it is", () => {
+    expect(endingText({ name: "Asr", leftMin: 5, makruh: true }).body).toContain("মাকরুহ");
+  });
+
+  it("carries no hadith — a hurry-up alert is one glance", () => {
+    expect(endingText({ name: "Isha", leftMin: 9, makruh: false }).body).not.toContain("—");
   });
 });
 

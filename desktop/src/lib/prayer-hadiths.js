@@ -20,6 +20,20 @@ export const PRAYER_HEADINGS = {
   Isha: "এশার ওয়াক্ত হয়েছে",
 };
 
+//! Same reason as above: Bengali's genitive differs per name, so the whole heading is stored.
+export const PRAYER_ENDING_HEADINGS = {
+  Fajr: "ফজরের ওয়াক্ত শেষ হয়ে আসছে",
+  Dhuhr: "জোহরের ওয়াক্ত শেষ হয়ে আসছে",
+  Asr: "আসরের ওয়াক্ত শেষ হয়ে আসছে",
+  Maghrib: "মাগরিবের ওয়াক্ত শেষ হয়ে আসছে",
+  Isha: "এশার ওয়াক্ত শেষ হয়ে আসছে",
+};
+
+//* The alert text is Bengali, so the count in it is too.
+export function bnDigits(n) {
+  return String(n).replace(/[0-9]/g, (d) => "০১২৩৪৫৬৭৮৯"[+d]);
+}
+
 export const PRAYER_REMINDERS = [
   //* ben-nasai #3991
   { text: "বান্দার থেকে সর্বপ্রথম নামাযের হিসাব নেয়া হবে। আর সর্বাগ্রে মানুষের হত্যার বিচার হবে।", source: "সুনানে নাসাঈ" },
