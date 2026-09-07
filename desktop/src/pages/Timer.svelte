@@ -74,7 +74,8 @@
     const now = new Date();
     const times = (p.days || {})[prayer.dayKey(now)];
     if (!times) return "times unavailable";
-    return prayer.statusLine(times, now.getHours() * 60 + now.getMinutes()) || "times unavailable";
+    //! Empty is not an error: between Islamic midnight and 00:00 no waqt is running.
+    return prayer.statusLine(times, now.getHours() * 60 + now.getMinutes()) || "no prayer time right now";
   });
 
   //* The reminder the next notification will carry — same rotation, so the card previews it.

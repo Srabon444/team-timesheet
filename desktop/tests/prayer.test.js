@@ -3,8 +3,8 @@
 // machine wakes up.
 import { describe, it, expect } from "vitest";
 import {
-  pickFive, toMinutes, duePrayers, nextPrayer, indexCalendar, pruneToMonth,
-  notificationText, dayKey, monthPrefix, statusLine,
+  pickTimes, toMinutes, duePrayers, nextPrayer, currentPrayer, waqtEnd, indexCalendar,
+  pruneToMonth, notificationText, dayKey, monthPrefix, statusLine,
 } from "../src/lib/prayer.js";
 import { prayerReminderAt, PRAYER_REMINDERS, PRAYER_HEADINGS } from "../src/lib/prayer-hadiths.js";
 
@@ -13,21 +13,63 @@ const raw = {
   Sunset: "18:17 (+06)", Maghrib: "18:17 (+06)", Isha: "19:34 (+06)", Imsak: "04:13 (+06)",
   Midnight: "23:58 (+06)",
 };
-const five = pickFive(raw);
+const five = pickTimes(raw);
 
-describe("pickFive", () => {
-  it("keeps only the five obligatory prayers", () => {
-    expect(Object.keys(five)).toEqual(["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]);
+describe("pickTimes", () => {
+  it("keeps the five prayers plus the boundaries a waqt ends on", () => {
+    expect(Object.keys(five)).toEqual(["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha", "Sunrise", "Sunset", "Midnight"]);
   });
 
   it("strips the API's timezone suffix", () => {
     expect(five.Fajr).toBe("04:23");
   });
 
-  it("never lets Sunrise, Imsak or Midnight through — they are not prayers", () => {
-    expect(five.Sunrise).toBeUndefined();
+  it("drops the timings nothing needs", () => {
     expect(five.Imsak).toBeUndefined();
-    expect(five.Midnight).toBeUndefined();
+    expect(five.Firstthird).toBeUndefined();
+  });
+
+  //! The boundaries are stored now, so this has to be enforced where it matters instead.
+  it("never notifies on a boundary — those are not prayers", () => {
+    expect(duePrayers(five, 5 * 60 + 40, []).due).toEqual([]);   // Sunrise
+    expect(duePrayers(five, 23 * 60 + 58, []).due).toEqual([]);  // Midnight
+    expect(nextPrayer(five, 5 * 60).name).toBe("Dhuhr");         // not Sunrise
+  });
+});
+
+describe("waqtEnd", () => {
+  it("ends Fajr ten minutes before sunrise, not at Dhuhr", () => {
+    expect(waqtEnd(five, "Fajr")).toBe(5 * 60 + 30); // sunrise 05:40
+  });
+
+  it("ends Asr at Maghrib", () => expect(waqtEnd(five, "Asr")).toBe(18 * 60 + 17));
+
+  it("ends Isha at Islamic midnight", () => expect(waqtEnd(five, "Isha")).toBe(23 * 60 + 58));
+
+  it("pushes an Islamic midnight past 00:00 into the next day instead of reading as expired", () => {
+    expect(waqtEnd({ ...five, Midnight: "00:12" }, "Isha")).toBe(24 * 60 + 12);
+  });
+
+  it("returns null rather than a guess when the boundary was never cached", () => {
+    expect(waqtEnd({ Fajr: "04:23" }, "Fajr")).toBeNull();
+  });
+});
+
+describe("currentPrayer", () => {
+  it("is the prayer that has started and not yet expired", () => {
+    expect(currentPrayer(five, 4 * 60 + 30).name).toBe("Fajr");
+  });
+
+  it("is nothing in the gap between sunrise and Dhuhr", () => {
+    expect(currentPrayer(five, 5 * 60 + 35)).toBeNull();
+  });
+
+  it("is nothing once Isha's waqt has run out", () => {
+    expect(currentPrayer(five, 23 * 60 + 59)).toBeNull();
+  });
+
+  it("falls back to the next prayer's start when no boundary is cached", () => {
+    expect(currentPrayer({ Fajr: "04:23", Dhuhr: "11:58" }, 5 * 60).name).toBe("Fajr");
   });
 });
 
@@ -83,7 +125,15 @@ describe("statusLine", () => {
   });
 
   it("drops the next half AND its comma after the last prayer of the day", () => {
-    expect(statusLine(five, 21 * 60)).toBe("Isha now");
+    expect(statusLine(five, 21 * 60)).toBe("Isha 2hr 58min remaining");
+  });
+
+  it("counts Fajr down to sunrise, not to Dhuhr", () => {
+    expect(statusLine(five, 4 * 60 + 30)).toBe("Fajr 1hr remaining, Dhuhr: 11:58 AM");
+  });
+
+  it("shows only the next prayer in the gap after sunrise", () => {
+    expect(statusLine(five, 6 * 60)).toBe("Dhuhr: 11:58 AM");
   });
 
   it("omits the hour when under an hour is left", () => {
