@@ -268,16 +268,19 @@ async function maybeNotifyPrayer() {
   if (!times) return; // month cache missing or stale — ensurePrayerMonth() refreshes it
 
   const doneToday = (p.notified || {})[key] || [];
-  const { due, stale } = prayer.duePrayers(times, now.getHours() * 60 + now.getMinutes(), doneToday);
-  if (!due.length && !stale.length) return;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const { due, stale } = prayer.duePrayers(times, nowMin, doneToday);
+  const ending = prayer.endingWarnings(times, nowMin, doneToday);
+  if (!due.length && !stale.length && !ending.due.length && !ending.stale.length) return;
 
   let index = p.reminderIndex || 0;
-  if (due.length) {
+  if (due.length || ending.due.length) {
     try {
       let granted = await isPermissionGranted();
       if (!granted) granted = (await requestPermission()) === "granted";
       if (granted) {
         for (const name of due) sendNotification(prayer.notificationText(name, prayerReminderAt(index++)));
+        for (const w of ending.due) sendNotification(prayer.endingText(w));
       } else {
         index += due.length; // keep the rotation moving even if the OS refused
       }
@@ -289,7 +292,10 @@ async function maybeNotifyPrayer() {
   //* burst of catch-up alerts the moment it wakes.
   app.data.prayer = {
     ...p,
-    notified: { ...(p.notified || {}), [key]: [...doneToday, ...due, ...stale] },
+    notified: {
+      ...(p.notified || {}),
+      [key]: [...doneToday, ...due, ...stale, ...ending.due.map((w) => w.mark), ...ending.stale],
+    },
     reminderIndex: index,
   };
   save();
