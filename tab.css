@@ -53,6 +53,7 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
   font-size: 15px;
 }
 .content h1 { font-size: 24px; }
+.content .dayTotalVal { font-size: 21px; padding: 4px 14px; }
 .content h2 { font-size: 15px; margin: 24px 0 10px; }
 .content label { font-size: 14px; margin: 10px 0 4px; }
 .content select, .content input[type=text], .content input[type=time] {
@@ -69,7 +70,7 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .content .entry { padding: 14px; }
 .content .entry .pname, .content .entry .cat, .content .submittedBadge { font-size: 12px; padding: 4px 10px; }
 .content .entry .desc { font-size: 13px; }
-.content .entry .time { width: 90px; }
+.content .entry .timepick select { padding: 7px 26px 7px 10px; font-size: 13px; }
 .content .entry .tbtn { width: 38px; height: 36px; font-size: 15px; }
 .content .entry .edit, .content .entry .del { width: 34px; height: 34px; font-size: 15px; }
 .content .entry .del { font-size: 18px; }

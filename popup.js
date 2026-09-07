@@ -154,6 +154,57 @@ function hhmmToSec(str) {
   const [h, m] = String(str).split(":").map((x) => parseInt(x, 10) || 0);
   return (h * 60 + m) * 60;
 }
+// ---------- time picker (hrs/min selects, same widget as the desktop app) ----------
+function timeOptions(count, suffix, selected) {
+  let out = "";
+  for (let i = 0; i < count; i++) {
+    out += `<option value="${i}"${i === selected ? " selected" : ""}>${pad(i)} ${suffix}</option>`;
+  }
+  return out;
+}
+//! Hours run past 23 when a timer was left going overnight, so the list grows
+//! to fit instead of clamping — a select that can't show 26:15 would silently
+//! rewrite the entry the moment it fires a change.
+function timePickInnerHTML(sec) {
+  const mins = Math.round(sec / 60);
+  const h = Math.floor(mins / 60);
+  return `<select class="thrs" aria-label="Hours">${timeOptions(Math.max(24, h + 1), "hrs", h)}</select>
+      <span class="colon">:</span>
+      <select class="tmins" aria-label="Minutes">${timeOptions(60, "min", mins % 60)}</select>`;
+}
+function pickHHMM(root) {
+  return `${pad(parseInt(root.querySelector(".thrs").value, 10))}:${pad(parseInt(root.querySelector(".tmins").value, 10))}`;
+}
+function setPickTime(root, sec) {
+  root.innerHTML = timePickInnerHTML(sec);
+}
+//! The live tick calls this every second on the running row. It sets values in
+//! place — an innerHTML rewrite would replace the selects, and once replaced
+//! the row's time could no longer be edited at all.
+function syncPickTime(root, sec) {
+  const mins = Math.round(sec / 60);
+  const h = Math.floor(mins / 60);
+  const hrs = root.querySelector(".thrs");
+  if (!hrs) return;
+  for (let i = hrs.options.length; i <= h; i++) {   // timer crossed into an hour the list doesn't have yet
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `${pad(i)} hrs`;
+    hrs.appendChild(opt);
+  }
+  hrs.value = String(h);
+  root.querySelector(".tmins").value = String(mins % 60);
+}
+//* The add form doubles as the edit form, so these two read/write whichever
+//* entry is being worked on.
+function formTimeStr() {
+  const el = $("timePick");
+  return el && el.querySelector(".thrs") ? pickHHMM(el) : "00:00";
+}
+function setFormTime(str) {
+  const el = $("timePick");
+  if (el) setPickTime(el, hhmmToSec(str));
+}
 function resolveTheme(theme) {
   if (theme === "system") {
     return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -249,6 +300,10 @@ function editTime(id, str) {
   e.accSec = hhmmToSec(str);
   if (isTodayView() && S.timer.activeId === id) S.timer.startedAt = Date.now(); // rebase running timer
   persistCurrent();
+  //! Editing a row's time used to leave the day total stale — every other
+  //! mutation re-renders, this one only needs the total refreshed (a full
+  //! render would rebuild the selects and drop focus mid-edit).
+  updateDayTotal();
 }
 
 // ---------- views ----------
@@ -396,7 +451,7 @@ function refreshAddForm() {
   $("projSelect").value = (d && d.project) || S.lastProject || currentProjects()[0];
   $("catSelect").value = (d && d.category) || S.lastCategory || currentCategories()[0];
   $("descInput").value = (d && d.description) || "";
-  if ($("timeInput")) $("timeInput").value = (d && d.time) || "00:00";
+  setFormTime((d && d.time) || "00:00");
   const editing = !!(d && d.editingId);
   $("addProject").textContent = editing ? "Save changes" : "+ Add Project";
   $("cancelEdit").classList.toggle("hidden", !editing);
@@ -406,7 +461,7 @@ function saveDraft() {
     project: $("projSelect").value,
     category: $("catSelect").value,
     description: $("descInput").value,
-    time: $("timeInput") ? $("timeInput").value : "00:00",
+    time: formTimeStr(),
     editingId: (S.draft && S.draft.editingId) || null,
   };
   chrome.storage.local.set({ draft: S.draft });
@@ -517,6 +572,10 @@ function setupSearchSelect(input, listEl, getOptions) {
 function viewTotalSec() {
   return currentEntries().reduce((sum, e) => sum + elapsedSec(e), 0);
 }
+function updateDayTotal() {
+  const totalEl = $("dayTotal");
+  if (totalEl) totalEl.textContent = secToHHMM(viewTotalSec());
+}
 
 // ---------- render entries ----------
 function render() {
@@ -525,8 +584,7 @@ function render() {
   const list = currentEntries();
   const todayView = isTodayView();
   $("emptyMsg").classList.toggle("hidden", list.length > 0);
-  const totalEl = $("dayTotal");
-  if (totalEl) totalEl.textContent = secToHHMM(viewTotalSec());
+  updateDayTotal();
   updateSubmittedUI();
   updateCopyBar();
   for (const e of list) {
@@ -550,7 +608,7 @@ function render() {
       <div class="desc"></div>
       <div class="row2">
         ${todayView ? `<button class="tbtn ${active ? "playing" : ""}">${active ? "❚❚" : "▶"}</button>` : ""}
-        <input class="time" type="text" value="${secToHHMM(elapsedSec(e))}">
+        <span class="timepick">${timePickInnerHTML(elapsedSec(e))}</span>
         <span class="live">${active ? secToHHMMSS(elapsedSec(e)) : ""}</span>
       </div>`;
     if (copyMode) div.querySelector(".copyChk").onchange = (ev) => toggleCopySelect(e.id, ev.target.checked);
@@ -566,8 +624,8 @@ function render() {
     if (tbtn) tbtn.onclick = () => (active ? pauseTimer() : startTimer(e.id));
     div.querySelector(".edit").onclick = () => startEdit(e.id);
     div.querySelector(".del").onclick = () => deleteEntry(e.id);
-    const ti = div.querySelector(".time");
-    ti.onchange = () => editTime(e.id, ti.value);
+    const pick = div.querySelector(".timepick");
+    pick.onchange = () => editTime(e.id, pickHHMM(pick));
     box.appendChild(div);
   }
   startTick();
@@ -662,12 +720,11 @@ function startTick() {
     const sec = elapsedSec(e);
     const live = document.querySelector(".entry.active .live");
     if (live) live.textContent = secToHHMMSS(sec);   // ticks every second -> clearly running
-    const inp = document.querySelector(".entry.active .time");
-    if (inp && document.activeElement !== inp) inp.value = secToHHMM(sec);
-    if (isTodayView()) {
-      const totalEl = $("dayTotal");
-      if (totalEl) totalEl.textContent = secToHHMM(viewTotalSec());
-    }
+    const pick = document.querySelector(".entry.active .timepick");
+    //! Skip the rewrite while either select is focused — the user is picking a
+    //! value and a per-second update would yank the list out from under them.
+    if (pick && !pick.contains(document.activeElement)) syncPickTime(pick, sec);
+    if (isTodayView()) updateDayTotal();
   }, 1000);
 }
 
@@ -682,7 +739,7 @@ async function submitDraft() {
   }
   const project = $("projSelect").value;
   const cat = $("catSelect").value;
-  const timeStr = $("timeInput") ? $("timeInput").value.trim() : "00:00";
+  const timeStr = formTimeStr();
   const timeSec = /^\d{1,2}:\d{2}$/.test(timeStr) ? hhmmToSec(timeStr) : 0;
   const editingId = S.draft && S.draft.editingId;
   if (editingId) {
@@ -1458,7 +1515,8 @@ document.addEventListener("DOMContentLoaded", () => {
   $("projSelect").onchange = saveDraft;
   $("catSelect").onchange = saveDraft;
   $("descInput").oninput = saveDraft;
-  if ($("timeInput")) $("timeInput").oninput = saveDraft;
+  //! change, not input — a select never fires input events.
+  if ($("timePick")) $("timePick").onchange = saveDraft;
   if ($("dayPrev")) $("dayPrev").onclick = () => setViewDate(addDaysStr(viewDate, -1));
   if ($("dayNext")) $("dayNext").onclick = () => setViewDate(addDaysStr(viewDate, 1));
   if ($("todayBtn")) $("todayBtn").onclick = () => setViewDate(S.date);
