@@ -10,6 +10,16 @@ const PRAYER_API = "https://api.aladhan.com/v1";
 //* The five obligatory prayers only. The API also returns Sunrise/Imsak/Midnight/Firstthird —
 //* none of those are prayers and none should raise a notification.
 const PRAYER_NAMES = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
+//! Not prayers, and never notified — kept only because a waqt's END is one of these.
+const PRAYER_BOUNDS = ["Sunrise", "Sunset", "Midnight"];
+
+//! A waqt ends when the next one starts, EXCEPT Fajr (ends at sunrise, hours before Dhuhr) and
+//! Isha (ends at Islamic midnight, not at the next Fajr). The API has no end field at all, so
+//! every end is derived from one of the timings it does return.
+const PRAYER_END_OF = { Fajr: "Sunrise", Dhuhr: "Asr", Asr: "Maghrib", Maghrib: "Isha", Isha: "Midnight" };
+//? Fajr is treated as over 10 minutes before sunrise: praying right up to the edge risks the
+//? sun breaking the horizon mid-prayer, which invalidates it. Tunable in one place.
+const PRAYER_FAJR_MARGIN_MIN = 10;
 
 function prayerDefaults() {
   return {
@@ -38,10 +48,11 @@ function prayerToMinutes(hhmm) {
   return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
 }
 
-// Keep only the five prayers, offsets stripped.
-function prayerPickFive(timings) {
+// The five prayers plus the boundaries a waqt can end on, offsets stripped. Imsak/Firstthird/
+// Lastthird are dropped — nothing needs them.
+function prayerPickTimes(timings) {
   const out = {};
-  for (const name of PRAYER_NAMES) {
+  for (const name of [...PRAYER_NAMES, ...PRAYER_BOUNDS]) {
     const v = prayerStripOffset((timings || {})[name]);
     if (v) out[name] = v;
   }
@@ -57,7 +68,7 @@ function prayerIndexCalendar(days) {
     if (!raw) continue;
     const [dd, mm, yyyy] = String(raw).split("-");
     if (!yyyy) continue;
-    out[`${yyyy}-${mm}-${dd}`] = prayerPickFive(d.timings);
+    out[`${yyyy}-${mm}-${dd}`] = prayerPickTimes(d.timings);
   }
   return out;
 }
@@ -86,14 +97,34 @@ function prayerNext(times, nowMin) {
   return null;
 }
 
-// The prayer whose waqt is running now: the last one whose time has already come today.
+// When a prayer's waqt is over, in minutes from midnight. null when the boundary it needs is
+// missing from the cache (a day cached before boundaries were stored).
+function prayerWaqtEnd(times, name) {
+  const startMin = prayerToMinutes((times || {})[name]);
+  let end = prayerToMinutes((times || {})[PRAYER_END_OF[name]]);
+  if (startMin === null || end === null) return null;
+  if (name === "Fajr") end -= PRAYER_FAJR_MARGIN_MIN;
+  //! Islamic midnight can land after 00:00 (midnightMode=JAFARI, or a high latitude), which reads
+  //! as a smaller number than Isha's start. Push it into the next day so the compare still works.
+  if (end <= startMin) end += 24 * 60;
+  return end;
+}
+
+// The prayer whose waqt is running right now — started, and not yet expired. null in the gaps,
+// which are real: nothing is due between sunrise and Dhuhr.
 function prayerCurrent(times, nowMin) {
-  let cur = null;
-  for (const name of PRAYER_NAMES) {
+  for (const name of [...PRAYER_NAMES].reverse()) {
     const at = prayerToMinutes((times || {})[name]);
-    if (at !== null && at <= nowMin) cur = { name, at };
+    if (at === null || at > nowMin) continue;
+    const endsAt = prayerWaqtEnd(times, name);
+    //! An unknown end must not silently become "runs forever" — fall back to the next prayer's
+    //! start, which is what this did before ends existed, and is right for Dhuhr/Asr/Maghrib.
+    const fallback = prayerNext(times, nowMin);
+    const end = endsAt !== null ? endsAt : fallback && fallback.at;
+    if (!end) return null;
+    return nowMin < end ? { name, at, endsAt: end } : null;
   }
-  return cur;
+  return null;
 }
 
 // "15:27" -> "3:27 PM"
@@ -105,8 +136,9 @@ function prayerFmt12(hhmm) {
 }
 
 function prayerFmtLeft(min) {
-  const h = Math.floor(min / 60);
-  return h ? `${h}hr ${min % 60}min` : `${min}min`;
+  const h = Math.floor(min / 60), m = min % 60;
+  if (!h) return `${m}min`;
+  return m ? `${h}hr ${m}min` : `${h}hr`;
 }
 
 // "Dhuhr 2hr 34min remaining, Asr: 3:27 PM".
@@ -116,7 +148,7 @@ function prayerStatusLine(times, nowMin) {
   const cur = prayerCurrent(times, nowMin);
   const next = prayerNext(times, nowMin);
   const parts = [];
-  if (cur) parts.push(next ? `${cur.name} ${prayerFmtLeft(next.at - nowMin)} remaining` : `${cur.name} now`);
+  if (cur) parts.push(`${cur.name} ${prayerFmtLeft(cur.endsAt - nowMin)} remaining`);
   if (next) parts.push(`${next.name}: ${prayerFmt12(times[next.name])}`);
   return parts.join(", ");
 }
@@ -149,6 +181,11 @@ function prayerMonthKey(d) {
 //* Zero-padded, so it prefix-matches the "YYYY-MM-DD" keys the caches are keyed by.
 function prayerMonthPrefix(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+//* Zero-padded "YYYY-MM-DD", matching the day keys the caches use.
+function prayerDayKey(d) {
+  return `${prayerMonthPrefix(d)}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 //! An unknown city does NOT error — Aladhan answers 200 with times for somewhere else entirely
@@ -198,7 +235,10 @@ async function prayerEnsureMonth() {
   const p = await prayerLoad();
   if (!p.enabled || !p.city) return p;
   const key = prayerMonthKey(new Date());
-  if (p.month === key && Object.keys(p.days || {}).length) return p;
+  //! A day cached before the boundary timings were stored cannot tell when a waqt ends, so a
+  //! missing Sunrise forces a refetch rather than waiting for the month to roll over.
+  const cached = (p.days || {})[prayerDayKey(new Date())];
+  if (p.month === key && Object.keys(p.days || {}).length && (!cached || cached.Sunrise)) return p;
   try {
     const fresh = await prayerFetchMonth(p.city, p.country, p.method, p.school);
     return await prayerSave({

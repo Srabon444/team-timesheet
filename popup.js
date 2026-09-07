@@ -885,7 +885,8 @@ async function renderPrayerRow() {
     return;
   }
   const now = new Date();
-  label.textContent = prayerStatusLine(times, now.getHours() * 60 + now.getMinutes()) || "times unavailable";
+  //! Empty is not an error: between Islamic midnight and 00:00 no waqt is running.
+  label.textContent = prayerStatusLine(times, now.getHours() * 60 + now.getMinutes()) || "no prayer time right now";
 }
 
 async function openPrayerSettings() {

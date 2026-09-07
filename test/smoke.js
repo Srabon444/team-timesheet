@@ -1320,10 +1320,31 @@ async function harness10() {
     Sunset: "18:17 (+06)", Maghrib: "18:17 (+06)", Isha: "19:34 (+06)", Imsak: "04:13 (+06)",
     Midnight: "23:58 (+06)",
   };
-  const five = ctx.prayerPickFive(raw);
-  A(Object.keys(five).join() === "Fajr,Dhuhr,Asr,Maghrib,Isha", "only the five obligatory prayers are kept");
+  const five = ctx.prayerPickTimes(raw);
+  A(Object.keys(five).join() === "Fajr,Dhuhr,Asr,Maghrib,Isha,Sunrise,Sunset,Midnight",
+    "the five prayers are kept, plus the boundaries a waqt ends on");
   A(five.Fajr === "04:23", "the API's \" (+06)\" offset suffix is stripped");
-  A(!("Sunrise" in five) && !("Imsak" in five) && !("Midnight" in five), "Sunrise/Imsak/Midnight can never raise a notification");
+  A(!("Imsak" in five) && !("Firstthird" in five), "timings nothing needs are dropped");
+  //! The boundaries are stored now, so this has to be enforced where it matters instead.
+  A(ctx.prayerDue(five, 5 * 60 + 40, []).due.length === 0 &&
+    ctx.prayerDue(five, 23 * 60 + 58, []).due.length === 0,
+    "Sunrise/Sunset/Midnight can never raise a notification");
+  A(ctx.prayerNext(five, 5 * 60) .name === "Dhuhr", "the next-prayer lookup skips Sunrise");
+
+  //* Waqt ends: Fajr at sunrise (minus the margin), Isha at Islamic midnight, the rest at the
+  //* next prayer's start.
+  A(ctx.prayerWaqtEnd(five, "Fajr") === 5 * 60 + 30, "Fajr ends 10 minutes before sunrise, not at Dhuhr");
+  A(ctx.prayerWaqtEnd(five, "Asr") === 18 * 60 + 17, "Asr ends at Maghrib");
+  A(ctx.prayerWaqtEnd(five, "Isha") === 23 * 60 + 58, "Isha ends at Islamic midnight");
+  A(ctx.prayerWaqtEnd({ ...five, Midnight: "00:12" }, "Isha") === 24 * 60 + 12,
+    "an Islamic midnight past 00:00 is pushed into the next day instead of reading as expired");
+  A(ctx.prayerWaqtEnd({ Fajr: "04:23" }, "Fajr") === null, "an end with no boundary cached is null, not a guess");
+
+  A(ctx.prayerCurrent(five, 4 * 60 + 30).name === "Fajr", "Fajr is current just after it starts");
+  A(ctx.prayerCurrent(five, 5 * 60 + 35) === null, "Fajr is over past sunrise — the gap until Dhuhr has no current prayer");
+  A(ctx.prayerCurrent(five, 23 * 60 + 59) === null, "Isha is over past Islamic midnight");
+  A(ctx.prayerCurrent({ Fajr: "04:23", Dhuhr: "11:58" }, 5 * 60).name === "Fajr",
+    "with no boundaries cached it falls back to the next prayer's start rather than expiring early");
 
   A(ctx.prayerToMinutes("04:23") === 263, "hh:mm parses to minutes");
   A(ctx.prayerToMinutes("nonsense") === null, "junk parses to null rather than NaN");
@@ -1345,8 +1366,12 @@ async function harness10() {
     "the status line names the running prayer's time left and the next prayer's clock time");
   A(ctx.prayerStatusLine(five, 2 * 60) === "Fajr: 4:23 AM",
     "before the first prayer the current half and its comma are both dropped");
-  A(ctx.prayerStatusLine(five, 21 * 60) === "Isha now",
+  A(ctx.prayerStatusLine(five, 21 * 60) === "Isha 2hr 58min remaining",
     "after the last prayer the next half and its comma are both dropped");
+  A(ctx.prayerStatusLine(five, 4 * 60 + 30) === "Fajr 1hr remaining, Dhuhr: 11:58 AM",
+    "Fajr counts down to sunrise, not to Dhuhr");
+  A(ctx.prayerStatusLine(five, 6 * 60) === "Dhuhr: 11:58 AM",
+    "in the gap after sunrise only the next prayer is shown");
   A(ctx.prayerStatusLine(five, 15 * 60) === "Dhuhr 27min remaining, Asr: 3:27 PM",
     "under an hour left drops the hour part");
   A(ctx.prayerStatusLine({}, 12 * 60) === "", "no times at all yields nothing, not a bare comma");
