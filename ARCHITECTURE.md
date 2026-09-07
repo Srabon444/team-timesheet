@@ -35,7 +35,7 @@ advanced. First-ever run (no prior `S.date`) skips archiving.
 `isTodayView()` compares `viewDate === S.date` (NOT the wall clock, so it
 stays correct across a rollover). `currentEntries()` → `S.entries` for the
 live day, else `S.history[viewDate]`. `persistCurrent()` writes back to the
-right place. The add form has an hh:mm time field for back-filling past days
+right place. The add form has an hrs/min select pair (the desktop app's picker) for back-filling past days
 (which have no live timer, so their play button is hidden). Nav controls:
 `dayPrev/dayNext/viewDateInput/todayBtn`, clamped to `<= S.date`.
 

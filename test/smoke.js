@@ -189,19 +189,54 @@ async function harness1() {
   await sleep(20);
   A(store.timer.activeId === null, "pause clears active timer");
 
-  const timeInp = win.document.querySelectorAll(".entry")[0].querySelector(".time");
-  timeInp.value = "02:30";
-  timeInp.dispatchEvent(new win.Event("change"));
+  // Row time is two selects (hrs/min), same widget as the desktop app —
+  // setTime() drives them the way a user picking values would.
+  function setTime(rowIdx, hh, mm) {
+    const row = win.document.querySelectorAll(".entry")[rowIdx].querySelector(".timepick");
+    row.querySelector(".thrs").value = String(hh);
+    row.querySelector(".tmins").value = String(mm);
+    row.querySelector(".tmins").dispatchEvent(new win.Event("change", { bubbles: true }));
+  }
+  setTime(0, 2, 30);
   await sleep(20);
-  A(store.entries[0].accSec === 9000, "manual time edit -> 2:30 = 9000s");
+  A(store.entries[0].accSec === 9000, "time picker edit -> 2:30 = 9000s");
+  //! This is the bug the picker landed with: editTime persisted but never
+  //! refreshed the header, so the day total sat at its old value.
+  A($("dayTotal").textContent === "02:30", "day total updates as soon as a row's time changes");
 
   // Entry B needs >=1 minute too, or the under-1-minute submit block (Req 2,
   // tested below on the third entry) would trip on it here instead.
-  const timeInpB = win.document.querySelectorAll(".entry")[1].querySelector(".time");
-  timeInpB.value = "00:01"; // exactly 1 minute -> at the block's boundary, not under it
-  timeInpB.dispatchEvent(new win.Event("change"));
+  setTime(1, 0, 1); // exactly 1 minute -> at the block's boundary, not under it
   await sleep(20);
-  A(store.entries[1].accSec === 60, "manual time edit -> 0:01 = 60s");
+  A(store.entries[1].accSec === 60, "time picker edit -> 0:01 = 60s");
+  A($("dayTotal").textContent === "02:31", "day total sums both edited rows");
+
+  // A timer left running overnight lands past 23h, which a fixed 24-option
+  // hours list could not represent — it would rewrite the entry on change.
+  const overnight = win.document.createElement("div");
+  overnight.innerHTML = `<span class="timepick">${win.timePickInnerHTML(26 * 3600 + 15 * 60)}</span>`;
+  const opick = overnight.querySelector(".timepick");
+  A(opick.querySelector(".thrs").options.length === 27, "hours list grows to fit a 26-hour entry");
+  A(win.pickHHMM(opick) === "26:15", "an over-24h time round-trips through the picker unchanged");
+  A(win.timePickInnerHTML(0).includes("00 hrs"), "options carry the desktop app's hrs/min labels");
+  // syncPickTime is what the tick uses — it must grow the list in place when a
+  // timer crosses past the last hour it has an option for.
+  win.syncPickTime(opick, 30 * 3600 + 5 * 60);
+  A(opick.querySelector(".thrs").options.length === 31, "the live tick grows the hours list in place");
+  A(win.pickHHMM(opick) === "30:05", "the grown list selects the new hour");
+
+  // The running row is redrawn every second by the live tick. Editing its time
+  // has to keep working after a tick has landed.
+  win.document.querySelectorAll(".entry")[0].querySelector(".tbtn").click();
+  await sleep(1100); // one full tick of the live clock
+  setTime(0, 5, 0);
+  await sleep(20);
+  A(store.entries[0].accSec === 18000, "a running row's time is still editable after a live tick");
+  win.document.querySelectorAll(".entry")[0].querySelector(".tbtn").click();
+  await sleep(20);
+  setTime(0, 2, 30); // put it back — the submit-payload assertions below expect 02:30
+  await sleep(20);
+  A(store.entries[0].accSec === 9000, "restored to 2:30 for the assertions that follow");
 
   // custom in-popup confirm modal (not native window.confirm — that renders
   // cropped/unusable inside a small extension popup)
@@ -358,9 +393,9 @@ async function harness1() {
   $("descInput").value = "Archived task";
   $("addProject").click();
   await sleep(20);
-  const archivedTimeInp = win.document.querySelector(".entry .time");
-  archivedTimeInp.value = "01:00";
-  archivedTimeInp.dispatchEvent(new win.Event("change"));
+  const archivedPick = win.document.querySelector(".entry .timepick");
+  archivedPick.querySelector(".thrs").value = "1";
+  archivedPick.querySelector(".thrs").dispatchEvent(new win.Event("change", { bubbles: true }));
   await sleep(20);
   const outgoingDate = store.date;
   const realTodayStr = win.todayStr;
@@ -435,7 +470,7 @@ async function harness1() {
   $("projSelect").value = "ZuPOS";
   $("catSelect").value = "Development";
   $("descInput").value = "Copy Tasks source";
-  $("timeInput").value = "01:00";
+  win.setFormTime("01:00");
   $("addProject").click();
   await sleep(20);
   A(win.document.querySelector(".entry .copyChk") === null, "no checkboxes rendered outside Copy Tasks mode");
