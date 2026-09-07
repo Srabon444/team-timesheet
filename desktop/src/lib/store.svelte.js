@@ -300,7 +300,10 @@ export async function ensurePrayerMonth() {
   const p = app.data.prayer;
   if (!p || !p.enabled || !p.city) return;
   const key = prayer.monthKey(new Date());
-  if (p.month === key && Object.keys(p.days || {}).length) return;
+  //! A day cached before the boundary timings were stored cannot tell when a waqt ends, so a
+  //! missing Sunrise forces a refetch rather than waiting for the month to roll over.
+  const cached = (p.days || {})[prayer.dayKey(new Date())];
+  if (p.month === key && Object.keys(p.days || {}).length && (!cached || cached.Sunrise)) return;
   try {
     const fresh = await prayer.fetchMonth(p.city, p.country, p.method, p.school);
     app.data.prayer = {
