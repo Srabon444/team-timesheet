@@ -1334,7 +1334,30 @@ async function harness10() {
   //* Waqt ends: Fajr at sunrise (minus the margin), Isha at Islamic midnight, the rest at the
   //* next prayer's start.
   A(ctx.prayerWaqtEnd(five, "Fajr") === 5 * 60 + 30, "Fajr ends 10 minutes before sunrise, not at Dhuhr");
-  A(ctx.prayerWaqtEnd(five, "Asr") === 18 * 60 + 17, "Asr ends at Maghrib");
+  A(ctx.prayerWaqtEnd(five, "Asr") === 18 * 60 + 7, "Asr ends 10 minutes before Maghrib");
+  A(ctx.prayerAsrMakruhStart(five) === 17 * 60 + 57, "Asr turns makruh 20 minutes before Maghrib");
+  A(ctx.prayerCurrent(five, 17 * 60 + 50).makruh === false && ctx.prayerCurrent(five, 17 * 60 + 58).makruh === true,
+    "the makruh flag is set only inside that window");
+  A(ctx.prayerStatusLine(five, 17 * 60 + 58) === "Asr 9min remaining (makruh), Maghrib: 6:17 PM",
+    "the status line says makruh when it is");
+
+  //* Asr ends 18:07 here, so the leads land at 17:37 and 17:52.
+  A(ctx.prayerEndingWarnings(five, 17 * 60 + 37, []).due.map((d) => d.mark).join() === "Asr:30",
+    "the 30-minute expiry warning fires on its minute");
+  A(ctx.prayerEndingWarnings(five, 17 * 60 + 45, []).due[0].leftMin === 22,
+    "a warning firing late reports the real minutes left, not its lead");
+  A(ctx.prayerEndingWarnings(five, 18 * 60 + 10, []).due.length === 0 &&
+    ctx.prayerEndingWarnings(five, 18 * 60 + 10, [], 60).due.length === 0,
+    "an expired waqt is never warned about, however wide the grace window");
+  A(ctx.prayerEndingWarnings(five, 3 * 60, []).due.length === 0, "a prayer that has not started is never warned about");
+  A(ctx.prayerEndingWarnings(five, 17 * 60 + 37, ["Asr:30"]).due.length === 0, "a warning already sent never repeats");
+  A(ctx.prayerEndingWarnings(five, 17 * 60 + 37, ["Asr"]).due.length === 1 &&
+    ctx.prayerDue(five, 15 * 60 + 27, ["Asr:30"]).due.join() === "Asr",
+    "start marks and warning marks cannot silence each other");
+  A(ctx.prayerEndingWarnings(five, 18 * 60 + 5, []).stale.includes("Asr:30"),
+    "a warning long past its window is recorded silently, not fired on wake-up");
+  A(ctx.prayerWaqtEnd({ Fajr: "04:23", Sunrise: "04:25" }, "Fajr") === null,
+    "a sunrise minutes after Fajr is degenerate data, not a 24-hour waqt");
   A(ctx.prayerWaqtEnd(five, "Isha") === 23 * 60 + 58, "Isha ends at Islamic midnight");
   A(ctx.prayerWaqtEnd({ ...five, Midnight: "00:12" }, "Isha") === 24 * 60 + 12,
     "an Islamic midnight past 00:00 is pushed into the next day instead of reading as expired");
@@ -1428,7 +1451,13 @@ async function harness10() {
   await sleep(30);
   // Maghrib/Isha are still ahead; Fajr/Dhuhr/Asr are hours past, so all three are silenced.
   A(notes.length === 0, "prayers hours past are silenced instead of firing a burst");
-  A((store.prayer.notified[key] || []).join() === "Fajr,Dhuhr,Asr", "they are still recorded so they can't fire later");
+  const marks = store.prayer.notified[key] || [];
+  A(marks.filter((m) => !m.includes(":")).join() === "Fajr,Dhuhr,Asr",
+    "they are still recorded so they can't fire later");
+  //! Dhuhr's waqt ended at Asr, hours ago — its expiry warnings must be recorded silently too,
+  //! or they fire the moment the machine wakes up.
+  A(marks.includes("Dhuhr:30") && marks.includes("Dhuhr:15"),
+    "expiry warnings for a waqt long gone are silenced and recorded, not fired");
 
   // Now put one prayer inside the grace window and re-run.
   const now = new Date();
@@ -1439,8 +1468,34 @@ async function harness10() {
   await sleep(30);
   A(notes.length === 1 && notes[0].title === "মাগরিবের ওয়াক্ত হয়েছে", "a prayer that is due right now fires exactly one notification");
   const shown = ctx.prayerReminderAt(0);
+
   A(notes[0].message === `${shown.text}\n— ${shown.source}`,
     "the notification carries the whole hadith and its source, not a truncated one");
+
+  //* Expiry warning: Maghrib 25 minutes out puts Asr's end (Maghrib - 10) exactly 15 away.
+  const soon = (mins) => {
+    const d = new Date(now.getTime() + mins * 60000);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  store.prayer = {
+    ...store.prayer,
+    days: { [key]: { ...store.prayer.days[key], Asr: "00:03", Maghrib: soon(25), Isha: soon(60) } },
+    notified: {},
+  };
+  notes.length = 0;
+  listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
+  await sleep(30);
+  const warn = notes.filter((n) => n.id.startsWith("prayer-end-"));
+  A(warn.length === 1, "one expiry warning fires, not one per lead");
+  A(warn[0].id.endsWith("Asr:15"), "the 15-minute lead fires; the 30-minute one is already stale");
+  A(warn[0].title === "আসরের ওয়াক্ত শেষ হয়ে আসছে", "the warning names the prayer in Bengali");
+  A(warn[0].message.startsWith("আর ১৫ মিনিট বাকি"), "it counts the real minutes left, in Bengali digits");
+  A(!warn[0].message.includes("—"), "a hurry-up alert carries no hadith");
+  notes.length = 0;
+  listeners.alarm.forEach((f) => f({ name: "prayerTick" }));
+  await sleep(30);
+  A(notes.filter((n) => n.id.startsWith("prayer-end-")).length === 0,
+    "the same warning does not fire again on the next tick");
 
   notes.length = 0;
   listeners.alarm.forEach((f) => f({ name: "prayerTick" }));

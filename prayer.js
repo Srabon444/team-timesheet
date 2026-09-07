@@ -17,9 +17,14 @@ const PRAYER_BOUNDS = ["Sunrise", "Sunset", "Midnight"];
 //! Isha (ends at Islamic midnight, not at the next Fajr). The API has no end field at all, so
 //! every end is derived from one of the timings it does return.
 const PRAYER_END_OF = { Fajr: "Sunrise", Dhuhr: "Asr", Asr: "Maghrib", Maghrib: "Isha", Isha: "Midnight" };
-//? Fajr is treated as over 10 minutes before sunrise: praying right up to the edge risks the
-//? sun breaking the horizon mid-prayer, which invalidates it. Tunable in one place.
-const PRAYER_FAJR_MARGIN_MIN = 10;
+//? Cut short of the boundary on purpose: praying right up to the edge risks the sun crossing the
+//? horizon mid-prayer, which invalidates it. Fajr against sunrise, Asr against sunset.
+const PRAYER_END_MARGIN_MIN = { Fajr: 10, Asr: 10 };
+//! Makruh (isfirar) is not in the API and has no single agreed minute — this is the common
+//! "sun visibly yellowing" convention, kept as one tunable number rather than a solar calculation.
+const ASR_MAKRUH_BEFORE_MAGHRIB_MIN = 20;
+//* Two nudges before a waqt runs out.
+const PRAYER_WARN_LEADS_MIN = [30, 15];
 
 function prayerDefaults() {
   return {
@@ -103,11 +108,22 @@ function prayerWaqtEnd(times, name) {
   const startMin = prayerToMinutes((times || {})[name]);
   let end = prayerToMinutes((times || {})[PRAYER_END_OF[name]]);
   if (startMin === null || end === null) return null;
-  if (name === "Fajr") end -= PRAYER_FAJR_MARGIN_MIN;
-  //! Islamic midnight can land after 00:00 (midnightMode=JAFARI, or a high latitude), which reads
-  //! as a smaller number than Isha's start. Push it into the next day so the compare still works.
-  if (end <= startMin) end += 24 * 60;
+  end -= PRAYER_END_MARGIN_MIN[name] || 0;
+  if (end <= startMin) {
+    //! Only Isha's end legitimately crosses midnight (midnightMode=JAFARI, or a high latitude),
+    //! where it reads as a smaller number than Isha's start — push it into the next day.
+    //! For any other prayer that ordering means degenerate data (a polar sunrise minutes after
+    //! Fajr); a null "unknown" is far safer there than a waqt that appears to run 24 hours.
+    if (name !== "Isha") return null;
+    end += 24 * 60;
+  }
   return end;
+}
+
+// When Asr turns makruh — still valid, but discouraged. null when Maghrib is not cached.
+function prayerAsrMakruhStart(times) {
+  const m = prayerToMinutes((times || {}).Maghrib);
+  return m === null ? null : m - ASR_MAKRUH_BEFORE_MAGHRIB_MIN;
 }
 
 // The prayer whose waqt is running right now — started, and not yet expired. null in the gaps,
@@ -122,7 +138,9 @@ function prayerCurrent(times, nowMin) {
     const fallback = prayerNext(times, nowMin);
     const end = endsAt !== null ? endsAt : fallback && fallback.at;
     if (!end) return null;
-    return nowMin < end ? { name, at, endsAt: end } : null;
+    if (nowMin >= end) return null;
+    const makruhAt = name === "Asr" ? prayerAsrMakruhStart(times) : null;
+    return { name, at, endsAt: end, makruh: makruhAt !== null && nowMin >= makruhAt };
   }
   return null;
 }
@@ -148,9 +166,39 @@ function prayerStatusLine(times, nowMin) {
   const cur = prayerCurrent(times, nowMin);
   const next = prayerNext(times, nowMin);
   const parts = [];
-  if (cur) parts.push(`${cur.name} ${prayerFmtLeft(cur.endsAt - nowMin)} remaining`);
+  if (cur) parts.push(`${cur.name} ${prayerFmtLeft(cur.endsAt - nowMin)} remaining${cur.makruh ? " (makruh)" : ""}`);
   if (next) parts.push(`${next.name}: ${prayerFmt12(times[next.name])}`);
   return parts.join(", ");
+}
+
+// Warnings that a running waqt is about to expire, one per lead in PRAYER_WARN_LEADS_MIN.
+//! Marks are "Asr:30", never "Asr", so they can share the day's notified list with the start
+//! notifications without either silencing the other.
+//! Bounded like prayerDue: a warning that sat unfired past the grace window, or past the end
+//! itself, is recorded silently rather than arriving as a burst after a wake-up.
+function prayerEndingWarnings(times, nowMin, alreadyNotified, graceMin = 10) {
+  const seen = new Set(alreadyNotified || []);
+  const due = [];
+  const stale = [];
+  for (const name of PRAYER_NAMES) {
+    const at = prayerToMinutes((times || {})[name]);
+    const end = prayerWaqtEnd(times, name);
+    if (at === null || end === null || nowMin < at) continue; // not started — nothing to warn about
+    for (const lead of PRAYER_WARN_LEADS_MIN) {
+      const mark = `${name}:${lead}`;
+      const warnAt = end - lead;
+      if (seen.has(mark) || nowMin < warnAt) continue;
+      if (nowMin < end && nowMin - warnAt <= graceMin) {
+        //! The real minutes left, not the lead: a warning that fires a few minutes late must not
+        //! claim 30 when 24 are left.
+        const makruhAt = name === "Asr" ? prayerAsrMakruhStart(times) : null;
+        due.push({ name, mark, leftMin: end - nowMin, makruh: makruhAt !== null && nowMin >= makruhAt });
+      } else {
+        stale.push(mark);
+      }
+    }
+  }
+  return { due, stale };
 }
 
 //* Bengali, from prayer-hadiths.js. Falls back to the API's own name if a heading is ever
@@ -160,6 +208,16 @@ function prayerNotificationText(name, reminder) {
   return {
     title: headings[name] || name,
     message: reminder ? `${reminder.text}\n— ${reminder.source}` : "",
+  };
+}
+
+//* Bengali, from prayer-hadiths.js. Carries no hadith: a "hurry up" alert should be one glance.
+function prayerEndingText(warning) {
+  const headings = typeof PRAYER_ENDING_HEADINGS === "object" ? PRAYER_ENDING_HEADINGS : {};
+  const left = typeof prayerBnDigits === "function" ? prayerBnDigits(warning.leftMin) : warning.leftMin;
+  return {
+    title: headings[warning.name] || warning.name,
+    message: `আর ${left} মিনিট বাকি${warning.makruh ? "\nএখন মাকরুহ ওয়াক্ত চলছে" : ""}`,
   };
 }
 

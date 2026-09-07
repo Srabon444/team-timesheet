@@ -87,22 +87,29 @@ async function checkPrayerTimes() {
 
   const notified = { ...(prayer.notified || {}) };
   const doneToday = notified[key] || [];
-  const { due, stale } = prayerDue(times, now.getHours() * 60 + now.getMinutes(), doneToday);
-  if (!due.length && !stale.length) return;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const { due, stale } = prayerDue(times, nowMin, doneToday);
+  const ending = prayerEndingWarnings(times, nowMin, doneToday);
+  if (!due.length && !stale.length && !ending.due.length && !ending.stale.length) return;
+
+  const notify = (id, title, message) =>
+    chrome.notifications.create(id, { type: "basic", iconUrl: "icons/icon128.png", title, message });
 
   let index = prayer.reminderIndex || 0;
   for (const name of due) {
     const { title, message } = prayerNotificationText(name, prayerReminderAt(index++));
-    chrome.notifications.create(`prayer-${key}-${name}`, {
-      type: "basic",
-      iconUrl: "icons/icon128.png",
-      title,
-      message,
-    });
+    notify(`prayer-${key}-${name}`, title, message);
+  }
+  for (const w of ending.due) {
+    const { title, message } = prayerEndingText(w);
+    notify(`prayer-end-${key}-${w.mark}`, title, message);
   }
   //* Stale ones are recorded without a notification, so a machine that was asleep doesn't get a
   //* burst of catch-up alerts the moment it wakes.
-  notified[key] = [...doneToday, ...due, ...stale];
+  notified[key] = [
+    ...doneToday, ...due, ...stale,
+    ...ending.due.map((w) => w.mark), ...ending.stale,
+  ];
   await chrome.storage.local.set({ prayer: { ...prayer, notified, reminderIndex: index } });
 }
 
