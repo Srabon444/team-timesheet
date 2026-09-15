@@ -45,7 +45,16 @@ jobs:
           java-version: "17"
 
       - name: Setup Android SDK
+        # The action's own default ("tools platform-tools") fails outright --
+        # Google dropped the legacy "tools" package from the SDK repository,
+        # so `sdkmanager tools platform-tools` now errors with "Failed to
+        # find package 'tools'" before platform-tools even installs. Nothing
+        # later in this workflow uses the old "tools" package's binaries
+        # (that was the pre-cmdline-tools `android`/AVD-manager CLI); the
+        # actual build drives sdkmanager/gradle directly.
         uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
 
       - name: Install NDK
         run: |
