@@ -24,6 +24,7 @@ function defaults() {
     days: {},
     submittedDays: {}, // { date: { at: ts, method: "auto"|"manual" } } — show-only
     deletedEntries: {}, // { entryId: deletedAtMs } — tombstones so sync merge doesn't resurrect a deleted entry
+    gdLastBackupSig: null, // signature of the last dated Drive snapshot actually written — see gdBackupNow()
     timer: { activeId: null, startedAt: null, date: null },
     name: "",
     names: [],

@@ -136,7 +136,9 @@ async function findLatest(folderId) {
 // Snapshot the CURRENT (post-merge) canonical state as a dated backup file.
 // Runs gdSync first — never snapshots this device's raw local view, which
 // could be missing entries another device added while this one was offline;
-// throws rather than ever writing an empty snapshot.
+// throws rather than ever writing an empty snapshot. Returns true if a
+// snapshot was actually written, false if skipped (nothing changed since the
+// last one).
 //* sync=false for callers that already ran a sync of their own (mark submitted), so one click
 //* doesn't sweep every submitted day twice.
 export async function gdBackupNow(sync = true) {
@@ -144,6 +146,16 @@ export async function gdBackupNow(sync = true) {
   const folderId = await ensureFolder();
   const latest = await findLatest(folderId);
   if (!latest) throw new Error("Nothing to back up yet — add an entry first.");
+  //? A dated snapshot used to get written unconditionally on every call (once/day auto-backup, or
+  //? any manual click) even with zero net change, cluttering Drive with identical copies — and,
+  //? worse, making it harder to spot the one dated snapshot from just before a real problem.
+  //? Compare against the signature of the last dated snapshot actually written and skip if nothing
+  //? moved (exportedAt always differs, so compare the same days/submittedDays/deletedEntries triple
+  //? gdSync already uses to detect real change, not the raw JSON).
+  let latestObj = null;
+  try { latestObj = JSON.parse(latest.content); } catch { latestObj = null; }
+  const backupSig = sig(latestObj && latestObj.days, latestObj && latestObj.submittedDays, latestObj && latestObj.deletedEntries);
+  if (app.data.gdLastBackupSig === backupSig) return false;
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
@@ -153,6 +165,9 @@ export async function gdBackupNow(sync = true) {
   const existing = await findByName(folderId, name);
   if (existing) await updateFile(existing, latest.content);
   else await createFile(folderId, name, latest.content);
+  app.data.gdLastBackupSig = backupSig;
+  save();
+  return true;
 }
 
 async function findByName(folderId, name) {
