@@ -266,10 +266,10 @@ async function gdDoSync() {
 async function gdDoBackup() {
   gdSetStatus("Backing up…");
   try {
-    await gdBackupNow();
+    const wrote = await gdBackupNow();
     S.gdLastBackup = todayStr();
     await chrome.storage.local.set({ gdLastBackup: S.gdLastBackup });
-    gdSetStatus("Backed up to Google Drive ✓", "ok");
+    gdSetStatus(wrote ? "Backed up to Google Drive ✓" : "Already up to date — nothing new to back up.", "ok");
     await gdRefreshUI();
   } catch (e) { gdSetStatus(e.message || String(e), "err"); }
 }

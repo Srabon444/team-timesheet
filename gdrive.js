@@ -93,7 +93,9 @@ async function gdUpdateFile(token, fileId, content) {
 // Snapshot the CURRENT (post-merge) canonical state as a dated backup file.
 // Runs gdSync first — never snapshots this device's raw local view, which
 // could be missing entries another device added while this one was offline;
-// throws rather than ever writing an empty snapshot.
+// throws rather than ever writing an empty snapshot. Returns true if a
+// snapshot was actually written, false if skipped (nothing changed since the
+// last one).
 //! interactive=false for anything fired off a plain click — the consent window takes focus and
 //! destroys the popup mid-call. Only the full view's explicit "Back up now" should prompt.
 async function gdBackupNow(interactive) {
@@ -103,6 +105,17 @@ async function gdBackupNow(interactive) {
   const folderId = await gdEnsureFolder(token);
   const latest = await gdFindLatest(token, folderId);
   if (!latest) throw new Error("Nothing to back up yet — add an entry first.");
+  //? A dated snapshot used to get written unconditionally on every call (once/day auto-backup,
+  //? or any manual click) even with zero net change, cluttering Drive with identical copies —
+  //? and, worse, making it harder to spot the one dated snapshot from just before a real problem.
+  //? Compare against the signature of the last dated snapshot actually written and skip if nothing
+  //? moved (exportedAt always differs, so compare the same days/submittedDays/deletedEntries triple
+  //? gdSync already uses to detect real change, not the raw JSON).
+  let latestObj = null;
+  try { latestObj = JSON.parse(latest.content); } catch (e) { latestObj = null; }
+  const sig = gdSig(latestObj && latestObj.days, latestObj && latestObj.submittedDays, latestObj && latestObj.deletedEntries);
+  const store = await chrome.storage.local.get(["gdLastBackupSig"]);
+  if (store.gdLastBackupSig === sig) return false;
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
   const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
@@ -112,6 +125,8 @@ async function gdBackupNow(interactive) {
   const existing = await gdFindByName(token, folderId, name);
   if (existing) await gdUpdateFile(token, existing, latest.content);
   else await gdCreateFile(token, folderId, name, latest.content);
+  await chrome.storage.local.set({ gdLastBackupSig: sig });
+  return true;
 }
 
 async function gdFindByName(token, folderId, name) {

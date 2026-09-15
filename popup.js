@@ -97,7 +97,7 @@ let tick = null;
 // Which day the main view is showing/editing. Today uses the live S.entries;
 // any past day reads/writes S.history[viewDate] so you can back-fill entries
 // the same way the desktop app lets you (Task 4b).
-let viewDate = null;
+var viewDate = null;
 // Copy Tasks (Req 1): copyMode toggles the checkbox column; copySelected
 // tracks which entry ids (of the viewed day) are picked for copying.
 let copyMode = false;
@@ -125,7 +125,7 @@ function currentEntries() {
   return isTodayView() ? S.entries : (S.history[viewDate] || []);
 }
 async function persistCurrent() {
-  if (isTodayView()) await chrome.storage.local.set({ entries: S.entries, timer: S.timer });
+  if (isTodayView()) await writeTodayEntries(); // merge-safe — see writeTodayEntries()
   else await patchHistoryDay(viewDate, S.history[viewDate] || []);
 }
 // Merge-write a single history day against whatever is CURRENTLY in storage,
@@ -218,8 +218,77 @@ function applyTheme(theme) {
 }
 
 // ---------- storage / state ----------
+// Merge-write S.entries against whatever's CURRENTLY in storage, same
+// reasoning as patchHistoryDay: a second open window (popup + tab.html, or
+// two tab.html windows) holds its own stale copy of S.entries, and a blind
+// replace here would silently erase whatever the other window added/edited
+// since this window last synced. Union by id (this window wins on a genuine
+// id collision — same tie-break gdMergeDays already uses for cross-device
+// sync) and drop anything either side tombstoned.
+async function writeTodayEntries() {
+  const stored = await chrome.storage.local.get(["entries", "deletedEntries"]);
+  S.deletedEntries = { ...(stored.deletedEntries || {}), ...(S.deletedEntries || {}) };
+  const byId = new Map();
+  for (const e of stored.entries || []) byId.set(e.id, e);
+  for (const e of S.entries) byId.set(e.id, e);
+  S.entries = [...byId.values()].filter((e) => !(e.id in S.deletedEntries));
+  await chrome.storage.local.set({ entries: S.entries, timer: S.timer, deletedEntries: S.deletedEntries });
+}
 async function persist() {
-  await chrome.storage.local.set({ entries: S.entries, timer: S.timer });
+  await writeTodayEntries();
+}
+// Roll S over to today if the wall clock has moved past S.date. Checked at
+// init() and again on a timer/visibility change (see init()) so a context
+// left open across midnight can't keep silently writing under the old date.
+async function rollDayIfNeeded() {
+  const today = todayStr();
+  if (S.date === today) return false;
+  // Another open context may already have rolled over — and even added
+  // entries under `today` — before this one noticed. Re-read storage rather
+  // than trusting this context's possibly-stale S.history.
+  const stored = await chrome.storage.local.get(null);
+  S.history = stored.history || S.history || {};
+  // Archive the outgoing day's entries before clearing them — skip on the
+  // very first run ever (no S.date yet) so we don't write a bogus entry.
+  if (S.date && S.entries && S.entries.length) {
+    foldActive(); // fold any running timer into accSec before archiving
+    await patchHistoryDay(S.date, S.entries); // merge — never blind-replace history
+  }
+  if (stored.date === today) {
+    // The other context already brought `today` live (and maybe added to
+    // it) — adopt its state instead of resetting to empty and losing it.
+    S.entries = stored.entries || [];
+    S.timer = stored.timer || { activeId: null, startedAt: null };
+  } else {
+    //! "Copy to" a future date stashes it under S.history[thatDate] (the only
+    //! way a future date gets entries — see confirmCopyTo; day-nav itself
+    //! caps at S.date). When that date arrives it must become the live
+    //! S.entries, not get reset to empty and left orphaned in history.
+    const arrived = S.history[today];
+    S.entries = (arrived && arrived.length) ? arrived : [];
+    if (arrived && arrived.length) delete S.history[today];
+    S.timer = { activeId: null, startedAt: null };
+  }
+  S.date = today;
+  S.draft = null;
+  await chrome.storage.local.set({ history: S.history, entries: S.entries, timer: S.timer, draft: null, date: today });
+  return true;
+}
+// Background trigger (timer/visibilitychange) for rollDayIfNeeded() — those
+// fire outside any click handler that would otherwise call render() itself,
+// and outside a user action that would otherwise reset viewDate.
+async function checkDayRollover() {
+  const wasViewingToday = viewDate === S.date;
+  const rolled = await rollDayIfNeeded();
+  if (!rolled) return;
+  if (wasViewingToday) viewDate = S.date;
+  const main = $("main");
+  if (S.name && main && !main.classList.contains("hidden")) {
+    if ($("whoDate")) $("whoDate").textContent = S.date;
+    updateDayNav();
+    refreshAddForm();
+    render();
+  }
 }
 async function init() {
   S = await chrome.storage.local.get(null);
@@ -236,24 +305,7 @@ async function init() {
   if (dailyLimitWasUnset) await chrome.storage.local.set({ dailyLimitHours: S.dailyLimitHours });
   S.warnedDate = S.warnedDate === undefined ? null : S.warnedDate;
   S.theme = S.theme || "dark";
-  const today = todayStr();
-  if (S.date !== today) {
-    // Archive the outgoing day's entries before clearing them — skip on the
-    // very first run ever (no S.date yet) so we don't write a bogus entry.
-    if (S.date && S.entries.length) {
-      foldActive(); // fold any running timer into accSec before archiving
-      await patchHistoryDay(S.date, S.entries); // merge — never blind-replace history
-    }
-    // daily reset: clear projects + timer + draft, keep name/names/lastCategory
-    S.entries = [];
-    S.timer = { activeId: null, startedAt: null };
-    S.draft = null;
-    S.date = today;
-    // history already merge-written above when there was something to archive;
-    // this re-write is a no-op then, and on a true first-ever run it just
-    // ensures the key exists as {} rather than being absent from storage.
-    await chrome.storage.local.set({ history: S.history, entries: [], timer: S.timer, draft: null, date: today });
-  }
+  await rollDayIfNeeded();
   document.documentElement.dataset.theme = resolveTheme(S.theme);
   route();
   // Cross-device sync: silently sync with Google Drive on open (if connected).
@@ -264,6 +316,14 @@ async function init() {
   if (typeof prayerEnsureMonth === "function") prayerEnsureMonth().then(renderPrayerRow).catch(() => {});
   //! The row shows a countdown, so it goes stale in tab.html, which stays open all day.
   setInterval(renderPrayerRow, 60000);
+  //! A window (esp. tab.html, left open for hours) never otherwise notices the
+  //! wall clock crossing into a new day on its own — nothing short of this was
+  //! re-checking todayStr(), so "today" silently stayed yesterday until the
+  //! user closed and reopened. The interval is the fallback; visibilitychange
+  //! catches it the instant the user looks back at the tab, well before they
+  //! can act (so a stale window is virtually always fixed before its next add).
+  setInterval(checkDayRollover, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkDayRollover(); });
   // Keep Names/Project/Category in sync with the live form on every open
   // instead of requiring a manual click — same silent-refresh idea as gdSync above.
   loadNames(true).catch(() => {});

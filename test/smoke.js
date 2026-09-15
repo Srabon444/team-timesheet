@@ -1550,6 +1550,275 @@ function PRAYER_COUNT_PROBE(ctx) {
   return n;
 }
 
+// ============================================================
+// HARNESS 11 — day rollover: future-day migration + stale-window adoption,
+// and writeTodayEntries()'s merge-on-write for the live day.
+// ============================================================
+// Regression tests for two bugs traced from the same root cause (no
+// re-read-before-write on `entries`, unlike patchHistoryDay which already
+// merges): (1) confirmCopyTo() stashes a future date's entries under
+// S.history[thatDate] -- the ONLY way a future date gets entries, since
+// day-nav caps at S.date -- and the day-rollover in init() used to just
+// reset S.entries to [], leaving that data orphaned in history forever;
+// (2) a second stale window (popup + tab.html, or two tab.html windows)
+// blindly overwrote `entries` in storage, silently erasing the other
+// window's adds/edits.
+async function harness11() {
+  console.log("\n== Harness 11: day rollover + live-entries merge-on-write ==");
+  const store = {};
+  const chromeMock = {
+    storage: { local: {
+      get: async (k) => (k === null ? { ...store } : Object.fromEntries(k.map((x) => [x, store[x]]))),
+      set: async (obj) => { Object.assign(store, obj); },
+    } },
+  };
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  dom.window.chrome = chromeMock;
+  dom.window.crypto = { randomUUID: () => "id-x" };
+  dom.window.document.addEventListener = () => {}; // keep init()/route() out of it — see harness8
+  const s = dom.window.document.createElement("script");
+  s.textContent = jsSrc;
+  dom.window.document.body.appendChild(s);
+  const win = dom.window;
+
+  // --- Part A: a "Copy to" future date must migrate into S.entries once it arrives ---
+  store.date = "2026-09-14";
+  store.entries = [];
+  store.history = { "2026-09-15": [{ id: "c1", project: "ZuPOS", category: "Development", description: "copied", accSec: 0 }] };
+  win.S.date = "2026-09-14";
+  win.S.entries = [];
+  win.S.history = { "2026-09-15": store.history["2026-09-15"] };
+  win.S.timer = { activeId: null, startedAt: null };
+  const realTodayStr = win.todayStr;
+  win.todayStr = () => "2026-09-15";
+  const rolledA = await win.rollDayIfNeeded();
+  A(rolledA === true, "rollDayIfNeeded reports it rolled");
+  A(store.entries.length === 1 && store.entries[0].id === "c1", "a future-dated copy migrates into live entries once its date arrives");
+  A(!store.history["2026-09-15"], "the migrated day is removed from history, not left duplicated");
+  A(store.date === "2026-09-15", "date advances to the arrived day");
+
+  // A day with nothing pre-stashed still resets to empty, same as before.
+  win.todayStr = () => "2026-09-16";
+  const rolledA2 = await win.rollDayIfNeeded();
+  A(rolledA2 === true && store.entries.length === 0, "a day with no future-dated stash just resets to empty, as before");
+
+  // No-op on the common case (S.date already == today).
+  const rolledNoop = await win.rollDayIfNeeded();
+  A(rolledNoop === false, "rollDayIfNeeded is a no-op once S.date already matches today");
+
+  // --- Part B: another context already rolled over (and added) -- adopt it, don't reset to empty ---
+  store.date = "2026-09-17";
+  store.entries = [{ id: "other-context-add", project: "VSB", category: "Development", description: "added elsewhere", accSec: 60 }];
+  store.timer = { activeId: null, startedAt: null };
+  win.S.date = "2026-09-16"; // this context's stale in-memory view, one day behind
+  win.S.entries = [];
+  win.S.history = {};
+  win.todayStr = () => "2026-09-17";
+  const rolledB = await win.rollDayIfNeeded();
+  A(rolledB === true, "rollDayIfNeeded rolls this stale context forward too");
+  A(store.entries.length === 1 && store.entries[0].id === "other-context-add",
+    "adopts the other context's already-live entries instead of blowing them away with an empty reset");
+  win.todayStr = realTodayStr;
+
+  // --- Part C: writeTodayEntries() merges by id against storage instead of blind-replacing ---
+  win.S.date = "2026-09-20";
+  win.S.timer = { activeId: null, startedAt: null };
+  store.date = "2026-09-20";
+  store.entries = [
+    { id: "e1", project: "ZuPOS", category: "Development", description: "one", accSec: 100 },
+    { id: "e2", project: "ZuPOS", category: "Development", description: "two", accSec: 200 },
+  ];
+  store.deletedEntries = {};
+  win.viewDate = "2026-09-20";
+  // "Context B": a stale copy missing e2 (added by another window after this
+  // one last synced), plus a genuinely new local add.
+  win.S.entries = [
+    store.entries[0],
+    { id: "e3", project: "ZuPOS", category: "Development", description: "three (new here)", accSec: 300 },
+  ];
+  win.S.deletedEntries = {};
+  await win.persistCurrent();
+  const idsAfterAdd = store.entries.map((e) => e.id).sort();
+  A(JSON.stringify(idsAfterAdd) === JSON.stringify(["e1", "e2", "e3"]),
+    "a stale window's write keeps the OTHER window's entry (e2) instead of erasing it, and still adds its own (e3)");
+
+  // Deleting locally must actually stick against a storage copy that still has it.
+  win.S.entries = win.S.entries.filter((e) => e.id !== "e3");
+  win.S.deletedEntries = { e3: Date.now() };
+  await win.persistCurrent();
+  A(!store.entries.some((e) => e.id === "e3"), "a local delete removes the entry even if storage's copy still had it");
+  A("e3" in store.deletedEntries, "the tombstone is persisted");
+
+  dom.window.close();
+}
+
+// ============================================================
+// HARNESS 12 — day rollover self-heals a window left open across midnight,
+// without requiring a manual close/reopen (checkDayRollover via
+// visibilitychange), and without yanking a deliberately-browsed past day.
+// ============================================================
+async function harness12() {
+  console.log("\n== Harness 12: live self-heal on visibilitychange ==");
+  const store = {};
+  const chromeMock = {
+    storage: { local: {
+      get: async (k) => (k === null ? { ...store } : Object.fromEntries((Array.isArray(k) ? k : [k]).map((x) => [x, store[x]]))),
+      set: async (obj) => { Object.assign(store, obj); },
+    } },
+  };
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = chromeMock;
+  win.matchMedia = () => ({ matches: false });
+  win.fetch = async () => ({ text: async () => "" });
+  win.crypto = { randomUUID: () => "id-h12" };
+  const s = win.document.createElement("script");
+  s.textContent = jsSrc;
+  win.document.body.appendChild(s);
+
+  store.name = "Debjit Paul";
+  store.date = "2026-09-20";
+  store.entries = [{ id: "e1", project: "ZuPOS", category: "Development", description: "yesterday's task", accSec: 3600 }];
+  store.timer = { activeId: null, startedAt: null };
+  win.todayStr = () => "2026-09-20"; // freeze "today" for the initial load itself
+  win.document.dispatchEvent(new win.Event("DOMContentLoaded"));
+  await sleep(50);
+
+  const $ = (id) => win.document.getElementById(id);
+  A($("whoDate").textContent === "2026-09-20", "loads showing the day it was opened on");
+
+  // Simulate the wall clock moving on while the tab just sits open (no
+  // setInterval tick in this test — the visibilitychange path must be
+  // independently sufficient, since Chrome throttles timers in hidden tabs).
+  win.todayStr = () => "2026-09-21";
+  Object.defineProperty(win.document, "hidden", { value: false, configurable: true });
+  win.document.dispatchEvent(new win.Event("visibilitychange"));
+  await sleep(30);
+
+  A(store.date === "2026-09-21", "storage rolls to the new day on visibilitychange, no manual reopen needed");
+  A(store.history["2026-09-20"] && store.history["2026-09-20"][0].id === "e1", "yesterday's entry is archived, not dropped");
+  A($("whoDate").textContent === "2026-09-21", "the open window's own view updates live to the new day");
+  A(store.entries.length === 0, "today starts empty (nothing was stashed for it)");
+
+  // A user deliberately browsing a past day must not get yanked back to
+  // "today" by this background check.
+  win.setViewDate("2026-09-10");
+  await sleep(20);
+  win.todayStr = () => "2026-09-22";
+  win.document.dispatchEvent(new win.Event("visibilitychange"));
+  await sleep(30);
+  A(store.date === "2026-09-22", "the day still rolls over in the background while browsing history");
+  A(win.viewDate === "2026-09-10", "browsing a past day is not yanked back to 'today' by the background check");
+
+  dom.window.close();
+}
+
+// ============================================================
+// HARNESS 13 — Drive backup skips writing a new dated snapshot when nothing
+// changed since the last one (gdBackupNow / gdDoBackup).
+// ============================================================
+function makeFakeDrive() {
+  let files = [];
+  let nextId = 1;
+  const parseMultipart = (body) => {
+    const chunks = body.split(/--ttb[0-9a-f]+/).map((c) => c.trim()).filter((c) => c && c !== "--");
+    const meta = JSON.parse(chunks[0].slice(chunks[0].indexOf("{")));
+    const content = chunks[1].slice(chunks[1].indexOf("{"), chunks[1].lastIndexOf("}") + 1);
+    return { meta, content };
+  };
+  const fetchMock = async (url, opts) => {
+    opts = opts || {};
+    const u = new URL(url);
+    if (u.pathname === "/drive/v3/files" && (!opts.method || opts.method === "GET")) {
+      const q = decodeURIComponent(u.searchParams.get("q") || "");
+      const nameMatch = q.match(/name='([^']*)'/);
+      const wantFolder = q.includes("mimeType='application/vnd.google-apps.folder'");
+      let list = files.filter((f) => !!f.isFolder === wantFolder && (!nameMatch || f.name === nameMatch[1]));
+      if (u.searchParams.get("orderBy") === "modifiedTime desc") list = [...list].sort((a, b) => b.modifiedTime - a.modifiedTime);
+      return { ok: true, status: 200, json: async () => ({ files: list.map((f) => ({ id: f.id, name: f.name, modifiedTime: new Date(f.modifiedTime).toISOString() })) }) };
+    }
+    if (u.pathname === "/drive/v3/files" && opts.method === "POST") {
+      const body = JSON.parse(opts.body);
+      const f = { id: "f" + nextId++, name: body.name, isFolder: true, modifiedTime: Date.now() };
+      files.push(f);
+      return { ok: true, status: 200, json: async () => ({ id: f.id }) };
+    }
+    if (u.pathname === "/upload/drive/v3/files" && opts.method === "POST") {
+      const { meta, content } = parseMultipart(opts.body);
+      const f = { id: "f" + nextId++, name: meta.name, content, modifiedTime: Date.now() };
+      files.push(f);
+      return { ok: true, status: 200, json: async () => ({ id: f.id, name: f.name }) };
+    }
+    const upd = u.pathname.match(/^\/upload\/drive\/v3\/files\/(.+)$/);
+    if (upd && opts.method === "PATCH") {
+      const f = files.find((x) => x.id === upd[1]);
+      if (f) { f.content = opts.body; f.modifiedTime = Date.now(); }
+      return { ok: true, status: 200, json: async () => (f ? { id: f.id, name: f.name } : {}) };
+    }
+    const dl = u.pathname.match(/^\/drive\/v3\/files\/(.+)$/);
+    if (dl && u.searchParams.get("alt") === "media") {
+      const f = files.find((x) => x.id === dl[1]);
+      return { ok: true, status: 200, text: async () => (f ? f.content : "") };
+    }
+    return { ok: false, status: 404, text: async () => "not found" };
+  };
+  return { fetchMock, dated: () => files.filter((f) => !f.isFolder && f.name !== "timesheet-latest.json") };
+}
+async function harness13() {
+  console.log("\n== Harness 13: skip redundant Drive backups ==");
+  const store = {};
+  const chromeMock = {
+    storage: { local: {
+      get: async (k) => (k === null ? { ...store } : Object.fromEntries((Array.isArray(k) ? k : [k]).map((x) => [x, store[x]]))),
+      set: async (obj) => { Object.assign(store, obj); },
+    } },
+  };
+  const gdSrc = fs.readFileSync(path.join(ROOT, "gdrive.js"), "utf8");
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = chromeMock;
+  win.crypto = { randomUUID: () => "id-h13" };
+  win.document.addEventListener = () => {}; // keep init()/route() out of it — see harness8
+  const s1 = win.document.createElement("script");
+  s1.textContent = jsSrc; // popup.js — provides S / buildExportText
+  win.document.body.appendChild(s1);
+  const s2 = win.document.createElement("script");
+  s2.textContent = gdSrc;
+  win.document.body.appendChild(s2);
+
+  const drive = makeFakeDrive();
+  win.fetch = drive.fetchMock;
+  win.gdToken = async () => "faketoken";
+
+  win.S.name = "Debjit Paul";
+  win.S.date = "2026-09-20";
+  win.S.entries = [{ id: "e1", project: "ZuPOS", category: "Development", description: "one", accSec: 3600 }];
+  win.S.history = {};
+  win.S.submittedDays = {};
+  win.S.deletedEntries = {};
+  win.S.timer = { activeId: null, startedAt: null };
+
+  const wrote1 = await win.gdBackupNow(true);
+  A(wrote1 === true, "first backup with real data is written");
+  A(drive.dated().length === 1, "one dated snapshot exists after the first backup");
+
+  const wrote2 = await win.gdBackupNow(true);
+  A(wrote2 === false, "calling backup again with nothing changed is skipped, not written");
+  A(drive.dated().length === 1, "no new dated snapshot file was added when nothing changed");
+
+  // A real change (a new entry) must still be backed up, not skipped.
+  // (Same-minute reruns overwrite that minute's dated file rather than
+  // multiplying it — see gdBackupNow's own comment — so assert on content,
+  // not file count, to stay accurate however fast the test happens to run.)
+  win.S.entries.push({ id: "e2", project: "ZuPOS", category: "Development", description: "two", accSec: 60 });
+  const wrote3 = await win.gdBackupNow(true);
+  A(wrote3 === true, "a genuine change after a skip is backed up normally");
+  const latestDated = drive.dated().sort((a, b) => b.modifiedTime - a.modifiedTime)[0];
+  A(JSON.parse(latestDated.content).days["2026-09-20"].some((e) => e.id === "e2"), "the new dated snapshot reflects the real change (e2)");
+
+  dom.window.close();
+}
+
 (async () => {
   await harness1();
   await harness2();
@@ -1561,6 +1830,9 @@ function PRAYER_COUNT_PROBE(ctx) {
   await harness8();
   await harness9();
   await harness10();
+  await harness11();
+  await harness12();
+  await harness13();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();
