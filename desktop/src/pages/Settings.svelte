@@ -116,7 +116,7 @@
   }
   async function gdDoBackup() {
     gdBusy = true; gdMsg = "Backing up…";
-    try { await gdBackupNow(); gdMsg = "Backed up to Google Drive ✓"; } catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
+    try { const wrote = await gdBackupNow(); gdMsg = wrote ? "Backed up to Google Drive ✓" : "Already up to date — nothing new to back up."; } catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
   }
   async function gdDoRestore() {
