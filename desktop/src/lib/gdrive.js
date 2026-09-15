@@ -52,10 +52,17 @@ function buildEnvelope() {
   };
 }
 function applyEnvelope(obj) {
+  //! Fold BEFORE replacing days — this credits the running timer's live,
+  //! not-yet-flushed seconds into its entry (and resets app.data.timer to
+  //! blank itself). Without this, any Drive pull while a timer was running
+  //! (including this same function's own sync path, not just an explicit
+  //! restore) silently discarded every second since it last started —
+  //! never imported a running timer, but was also dropping real elapsed
+  //! time on the floor instead of crediting it first.
+  timer.foldActive(app.data);
   app.data.days = obj.days || {};
   app.data.submittedDays = obj.submittedDays || {};
   app.data.deletedEntries = obj.deletedEntries || {};
-  app.data.timer = { activeId: null, startedAt: null, date: null }; // never import a running timer
   if (obj.name && !app.data.name) app.data.name = obj.name;
   save();
 }
