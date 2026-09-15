@@ -212,6 +212,11 @@ async function gdSync(interactive) {
   if (typeof buildExportText !== "function") return ""; // not in a data context
   let token;
   try { token = await gdToken(!!interactive); } catch (e) { return interactive ? "Not connected." : ""; }
+  //! Refresh this context's own state from storage FIRST — see
+  //! refreshLocalStateFromStorage()'s comment. Without this, a stale context's
+  //! outdated snapshot can win an id collision against Drive's fresher copy
+  //! and get written straight back into storage below.
+  if (typeof refreshLocalStateFromStorage === "function") await refreshLocalStateFromStorage();
 
   const folderId = await gdEnsureFolder(token);
   const latest = await gdFindLatest(token, folderId);

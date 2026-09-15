@@ -1819,6 +1819,99 @@ async function harness13() {
   dom.window.close();
 }
 
+// ============================================================
+// HARNESS 14 — a manual edit reverting a few seconds later (Drive sync using
+// a stale second context's own outdated snapshot as "local").
+// ============================================================
+// Real bug report: user manually edits an entry's time; a bit later it's
+// back to 00:00. Root cause, confirmed by reproducing it against the
+// unpatched code before this fix: gdSync() built its "local" side from
+// buildExportText(), which reads THIS CONTEXT's in-memory S — not fresh
+// storage. A second open window (tab.html left open while the popup made an
+// edit) has a stale S; when ITS OWN gdSync() runs (e.g. gdSyncSoon()'s
+// 2.5s-debounced trigger off the OTHER window's storage write), the merge's
+// documented "local wins on an id collision" tie-break picks the stale
+// window's OLD value over Drive's fresher one — and because the day's
+// overall signature still differs from the stale window's own (it's missing
+// entries the other window added), gdSync's "pulled" branch fires and
+// applyBackupData() writes that reverted value straight back into the
+// SHARED storage. refreshLocalStateFromStorage() fixes this by re-reading
+// storage before building the local snapshot, so "local" is never stale.
+function makeSharedStorageMock(store) {
+  // Deep-clones on every get(), matching real chrome.storage.local (which
+  // structured-clones across contexts) — a shallow `{...store}` would let
+  // two "separate" contexts accidentally share live object references and
+  // mask exactly this bug (mutating one context's entry would silently
+  // "fix" the other's stale copy too, which never happens for real).
+  const clone = (v) => (v === undefined ? null : JSON.parse(JSON.stringify(v)));
+  return {
+    get: async (k) => (k === null ? clone(store) : Object.fromEntries((Array.isArray(k) ? k : [k]).map((x) => [x, clone(store[x])]))),
+    set: async (obj) => { Object.assign(store, obj); },
+  };
+}
+function makeSyncContext(store, drive) {
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = { identity: {}, storage: { local: makeSharedStorageMock(store) } };
+  win.matchMedia = () => ({ matches: false });
+  win.fetch = drive.fetchMock;
+  win.document.addEventListener = () => {}; // keep init()/route() out of it — see harness8
+  const s1 = win.document.createElement("script");
+  s1.textContent = jsSrc; // popup.js
+  win.document.body.appendChild(s1);
+  const s2 = win.document.createElement("script");
+  s2.textContent = fs.readFileSync(path.join(ROOT, "gdrive.js"), "utf8");
+  win.document.body.appendChild(s2);
+  // Stub AFTER both scripts evaluate — gdrive.js's own `function gdToken(){}`
+  // declaration would otherwise clobber an earlier stub.
+  win.gdToken = async () => "faketoken";
+  return win;
+}
+async function harness14() {
+  console.log("\n== Harness 14: manual edit survives a stale second window's Drive sync ==");
+  const store = {};
+  const drive = makeFakeDrive();
+  store.name = "Debjit Paul";
+  store.date = "2026-09-15";
+  store.entries = [{ id: "e1", project: "ZuPOS", category: "Development", description: "task", accSec: 0 }];
+  store.history = {};
+  store.submittedDays = {};
+  store.deletedEntries = {};
+  store.timer = { activeId: null, startedAt: null };
+
+  // ctxA = the popup, freshly opened. ctxB = tab.html, opened at the same moment.
+  const ctxA = makeSyncContext(store, drive);
+  ctxA.S = await ctxA.chrome.storage.local.get(null);
+  ctxA.viewDate = ctxA.S.date;
+  const ctxB = makeSyncContext(store, drive);
+  ctxB.S = await ctxB.chrome.storage.local.get(null);
+  ctxB.viewDate = ctxB.S.date;
+
+  // ctxB's own init() already synced once (writes today's day to Drive).
+  await ctxB.gdSync(false);
+
+  // The user edits e1's time in ctxA, and separately adds a new entry (so
+  // the day's overall signature genuinely differs from ctxB's stale view too
+  // — an edit-only change wouldn't even trigger ctxB's "pulled" branch).
+  ctxA.editTime("e1", "02:15");
+  ctxA.S.entries.push({ id: "e2", project: "VSB", category: "Development", description: "second task", accSec: 300 });
+  await ctxA.persistCurrent();
+  await ctxA.gdSync(false); // ctxA's own sync pushes both changes to Drive
+
+  A(store.entries.find((e) => e.id === "e1").accSec === 8100, "sanity: the edit is in shared storage before ctxB ever syncs");
+
+  // ~2.5s later, ctxB's OWN gdSyncSoon() fires gdSync(false) — ctxB never
+  // reloaded, so without the fix this uses ctxB's stale pre-edit view as "local".
+  await ctxB.gdSync(false);
+
+  const e1After = store.entries.find((e) => e.id === "e1");
+  A(e1After.accSec === 8100, "the manual edit survives a stale second window's background Drive sync");
+  A(store.entries.some((e) => e.id === "e2"), "the other window's new entry is still present too");
+
+  ctxA.close();
+  ctxB.close();
+}
+
 (async () => {
   await harness1();
   await harness2();
@@ -1833,6 +1926,7 @@ async function harness13() {
   await harness11();
   await harness12();
   await harness13();
+  await harness14();
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();

@@ -921,6 +921,24 @@ function buildExportText() {
     null, 2
   );
 }
+// Re-syncs the fields buildExportText()/buildDaysMap() read straight from
+// storage before a Drive sync — a stale context (e.g. tab.html left open
+// while the popup made an edit elsewhere) must not feed gdSync() an outdated
+// "local" snapshot: an id collision's local-wins tie-break would then pick
+// the STALE value over Drive's fresher one, and gdSync's own applyBackupData
+// call writes that reverted value straight back into storage (root cause of
+// a manual time edit silently reverting a couple seconds later — the same
+// mechanism a real restore uses, hence looking like "coming from a backup").
+// Only refreshes entries when storage agrees on which day is "today" — a
+// day-boundary mismatch is rollDayIfNeeded()'s job, not this function's.
+async function refreshLocalStateFromStorage() {
+  const stored = await chrome.storage.local.get(null);
+  if (stored.date === S.date) S.entries = stored.entries || [];
+  S.history = stored.history || {};
+  S.name = stored.name || S.name;
+  S.submittedDays = stored.submittedDays || {};
+  S.deletedEntries = stored.deletedEntries || {};
+}
 // Overwrite all tracked data from a parsed envelope (no confirm — callers
 // confirm/decide). Refreshes whatever views exist in this context.
 async function applyBackupData(obj) {
