@@ -30,7 +30,7 @@ async function loadStore() {
 describe("day-submitted marking", () => {
   beforeEach(() => vi.resetModules());
 
-  it("unmarking leaves an explicit null tombstone, not a missing key", async () => {
+  it("unmarking leaves a stamped tombstone, not a missing key", async () => {
     const store = await loadStore();
     const DAY = "2026-09-04";
     store.app.data.days = { [DAY]: [{ id: "e1", project: "P", category: "C", description: "d", accSec: 600 }] };
@@ -41,10 +41,10 @@ describe("day-submitted marking", () => {
 
     await store.unmarkDaySubmitted(DAY);
     expect(store.daySubmitted(DAY)).toBeFalsy();
-    // The bug: `delete` left nothing for the Drive merge ({...drive, ...local}) to override, so
-    // the day came back marked on the next sync.
+    // The bug: `delete` left nothing for the Drive merge to override, so the day came back marked.
     expect(DAY in store.app.data.submittedDays).toBe(true);
-    expect(store.app.data.submittedDays[DAY]).toBeNull();
+    expect(store.app.data.submittedDays[DAY].method).toBeNull();
+    expect(store.app.data.submittedDays[DAY].at).toBeGreaterThan(0);
   });
 
   it("a Drive copy that still has the day marked cannot resurrect a tombstone", async () => {
@@ -56,8 +56,8 @@ describe("day-submitted marking", () => {
     await store.unmarkDaySubmitted(DAY);
 
     const drive = { [DAY]: { at: 1, method: "manual" } };
-    const merged = { ...drive, ...store.app.data.submittedDays };
-    expect(merged[DAY]).toBeNull();
+    const merged = globalThis.TTCore.merge([{ submittedDays: drive }, { submittedDays: store.app.data.submittedDays }]);
+    expect(globalThis.TTCore.isMarked(merged.submittedDays[DAY])).toBe(false);
   });
 
   it("unmarking tells the dashboard to drop the day", async () => {
