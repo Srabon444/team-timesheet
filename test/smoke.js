@@ -1283,6 +1283,13 @@ async function harness7() {
   const junk = C.merge([{ days: { [D]: [{ id: "legacyX" }] }, deletedEntries: { legacyX: "NaN" } }, { deletedEntries: { legacyX: 0 } }]);
   A(ids(junk) === "legacyX", "a junk or zero tombstone never deletes an entry");
 
+  const pd = dev("devP");
+  pd.days = { [D]: [{ id: "mine" }] };
+  const poisoned = C.merge([C.stateOf(pd), { days: { [D]: [{ id: "p", updatedAt: "Infinity" }] }, clock: 1e20, deletedEntries: { mine: 1e20 } }]);
+  pd.clock = Math.max(pd.clock, poisoned.clock);
+  const s1 = C.touch(pd, { id: "n1" }).updatedAt, s2 = C.touch(pd, { id: "n2" }).updatedAt;
+  A(ids(poisoned).includes("mine") && isFinite(poisoned.clock) && s2 > s1, "absurd times (Infinity, 1e20) in a corrupt file can't poison the clock or delete anything");
+
   // Restore candidates + apply.
   const cur = { days: { [D]: [{ id: "keep" }] } };
   const backup = { days: { [D]: [{ id: "keep" }, { id: "gone", description: "lost one", accSec: 90 }], "2026-07-01": [{ id: "old" }] } };
@@ -2038,6 +2045,22 @@ async function harness14() {
     A(!!a.store.gdLegacyClientAt && a.store.entries.some((e) => e.id === "oldAppAdd"), "a later write by an old client is flagged and its entry merged");
     a.w.close();
   }
+  // 8c. Popup and full view on the SAME device both start a sync at once (shared Web Lock).
+  {
+    const drive = makeDrive();
+    const locks = makeLocks();
+    const store = { name: "T", entries: [], history: {}, submittedDays: {}, deletedEntries: {}, timer: { activeId: null, startedAt: null } };
+    const w1 = makeDataContext(store, locks), w2 = makeDataContext(store, locks);
+    store.date = w1.todayStr();
+    w1.fetch = drive.fetchFor("A"); w2.fetch = drive.fetchFor("A");
+    await w1.mutate((d) => { w1.TTData.list(d, d.date).push({ id: "p1" }); });
+    await Promise.all([w1.gdSync(false), w2.gdSync(false), w2.mutate((d) => { w2.TTData.list(d, d.date).push({ id: "p2" }); })]);
+    await w1.gdSync(false);
+    const own = drive.files().filter((f) => f.name === `device-${store.deviceId}.json`);
+    A(own.length === 1, "two windows syncing at once still write exactly one device file");
+    A(["p1", "p2"].every((id) => JSON.parse(own[0].content).days[store.date].some((e) => e.id === id)), "and it holds both windows' entries");
+    w1.close(); w2.close();
+  }
   // 9. Concurrent timers on the same task (decision: last fold wins, conflict is logged).
   {
     const drive = makeDrive();
@@ -2101,6 +2124,39 @@ async function harness15() {
   w.close();
 }
 
+// ============================================================
+// HARNESS 16 — the service worker records the form tab's "submitted" mark
+// (the Fillout page can't take the data lock) and ignores junk messages.
+// ============================================================
+async function harness16() {
+  console.log("\n== Harness 16: service-worker submitted mark ==");
+  const store = { date: "2026-09-27", entries: [{ id: "e1", project: "P", category: "C", description: "d", accSec: 60 }], history: {}, submittedDays: {} };
+  let onMessage = null;
+  const noop = () => {};
+  const chromeMock = {
+    action: { setBadgeText: noop, setBadgeBackgroundColor: noop, setTitle: noop },
+    storage: { local: makeSharedStorageMock(store), onChanged: { addListener: noop } },
+    alarms: { create: noop, clear: noop, onAlarm: { addListener: noop } },
+    notifications: { create: noop },
+    runtime: { onInstalled: { addListener: noop }, onStartup: { addListener: noop }, onMessage: { addListener: (fn) => { onMessage = fn; } } },
+  };
+  const pre = ["prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n") + "\n";
+  new Function("chrome", "importScripts", pre + fs.readFileSync(path.join(ROOT, "background.js"), "utf8"))(chromeMock, () => {});
+  await sleep(20);
+  A(typeof onMessage === "function", "the worker listens for the form tab's message");
+  onMessage({ tt: "markSubmitted", date: "not-a-date" });
+  onMessage({ tt: "somethingElse", date: "2026-09-26" });
+  onMessage(null);
+  await sleep(30);
+  A(Object.keys(store.submittedDays).length === 0, "junk or unknown messages write nothing");
+  onMessage({ tt: "markSubmitted", date: "2026-09-26", method: "auto" });
+  await sleep(30);
+  const info = store.submittedDays["2026-09-26"];
+  A(info && info.method === "auto" && info.at > 0 && info.by === store.deviceId, "a real mark is stamped by this device");
+  A((store.ttLog || []).some((e) => e.type === "mark-submitted" && e.via === "form tab"), "the mark is in the activity log");
+  A(store.entries.length === 1 && store.entries[0].id === "e1", "marking does not disturb the day's entries");
+}
+
 //! A harness awaiting a promise that never settles lets Node exit early with code 0 and no summary
 //! line — that must read as a failure, not a pass.
 let finished = false;
@@ -2121,6 +2177,7 @@ process.on("exit", () => { if (!finished) { console.error("\nSMOKE: DID NOT FINI
   await harness13();
   await harness14();
   await harness15();
+  await harness16();
   finished = true;
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
