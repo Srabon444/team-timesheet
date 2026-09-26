@@ -1,4 +1,5 @@
 mod gdrive;
+mod storage;
 
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -17,24 +18,6 @@ struct FilloutJob {
 }
 
 struct FilloutState(Mutex<Option<FilloutJob>>);
-
-#[tauri::command]
-fn load_data(app: AppHandle) -> Result<String, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = dir.join("data.json");
-    if path.exists() {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())
-    } else {
-        Ok("{}".to_string())
-    }
-}
-
-#[tauri::command]
-fn save_data(app: AppHandle, json: String) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("data.json"), json).map_err(|e| e.to_string())
-}
 
 /// Fetch the Fillout form's HTML so the frontend can parse the Name
 /// dropdown's static options out of __NEXT_DATA__ (same trick as the
@@ -237,8 +220,12 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            load_data,
-            save_data,
+            storage::load_data,
+            storage::save_data,
+            storage::append_log,
+            storage::read_log,
+            storage::save_recovery,
+            storage::list_recovery,
             fetch_form_html,
             fillout_post,
             open_fillout,
