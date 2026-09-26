@@ -17,7 +17,12 @@ desktop/
       store.svelte.js       central runes state ($state app{}), persistence,
                             timer/entry actions, submit flow, fill-status listener,
                             nav{page,jumpDate}, submittedDays helpers
-      timer.js              pure timer engine (fold/start/pause/edit, rollover)
+      timer.js              pure timer engine (fold/start/pause/edit, rollover);
+                            stamps every entry change (TTCore.touch)
+      sync-core.js          sync v2 core (TTCore) — BYTE-IDENTICAL to the
+                            extension's root sync-core.js; change both together
+      gdrive.js             Drive transport + atomic local commit for TTCore.sync
+      activity.js           activity log + recovery points (Rust files)
       time.js stats.js      pure date + dashboard math (ported from extension)
       constants.js          DEFAULT_PROJECTS/DEFAULT_CATEGORIES (pre-fetch
                             fallback) + color maps + FORM_URL/SUBFORM_URL
@@ -28,29 +33,42 @@ desktop/
     components/
       AddEntryModal.svelte  add/edit (Project→Category, hrs/min picker, presets)
       Confirm.svelte        promise-based confirm, per-action Yes label
+      RestorePicker.svelte  restore/import: missing tasks, each ✓ add / ✗ skip
     pages/
       Timer.svelte          big timer + hover quick-add menu, day strip, entry
                             rows, Summary (+ submit panel + submission status)
       Timesheet.svelte      week list; day rows click → jump to that day in Timer
       Projects.svelte Reports.svelte Settings.svelte
   src-tauri/
-    src/lib.rs              commands + Fillout window + title-poll bridge
+    src/lib.rs              commands + Fillout window + title-poll bridge;
+                            single-instance plugin on desktop targets
+    src/storage.rs          data.json (atomic write, .bak, corrupt fallback),
+                            activity.log, recovery/ (cargo test)
     tauri.conf.json         window config; bundle.targets differ per branch
-  tests/lib.test.js         vitest (35 incl. gdrive-reconnect.test.js)
+  tests/                    vitest; sync-v2.test.js = multi-device + persistence
 ```
 
 ## State & persistence
 
 `store.svelte.js` holds `export const app = $state({ data, loaded, now, fill,
 confirm })`. `data` is persisted to `app_data_dir/data.json` via the Rust
-`load_data`/`save_data` commands (debounced `save()`). `now` is a 1s tick so
+`load_data`/`save_data` commands. `save()` writes immediately and serialized
+(no debounce — a debounce lost the last edit when the app closed); a failed
+save sets `app.saveError` (banner). `load_data` returns `data.json.bak` when
+`data.json` is torn (copying the bad file aside); an unreadable (locked) file
+sets `app.saveBlocked` so it is never saved over. `now` is a 1s tick so
 timer displays stay live; the same tick runs `rolloverIfNeeded` and the
 daily-limit notification. `nav{page,jumpDate}` drives sidebar routing +
 cross-page day jumps.
 
 Data: `days{date: entries[]}`, `timer{activeId, startedAt, date}`,
-`submittedDays{date:{at,method}}` (show-only), plus scalar settings. Entry:
-`{id, project, category, description, accSec, submitted}`.
+`submittedDays{date:{at,method|null,by}}`, `deletedEntries`/`deletedBy`,
+`clock`, `deviceId`, plus scalar settings. Entry: `{id, project, category,
+description, accSec, submitted, updatedAt, updatedBy}`. The sync model (per-device
+Drive files, stamped merge, tombstones, restore picker, recovery points, activity
+log) is the extension's — see "Sync v2" in [../ARCHITECTURE.md](../ARCHITECTURE.md)
+on `master`. Desktop specifics: `gdSync` calls are chained (one at a time) and
+`commitRemote` merges into `app.data` synchronously, after all network calls.
 
 `projects[]`/`categories[]` start empty; Settings' "Fetch projects &
 categories" (`fetchProjectsAndCategories`) fills them from the live
@@ -98,6 +116,8 @@ and prunes older releases for that OS. See [../CLAUDE.md](../CLAUDE.md).
 
 ## Tests
 
-`npm test` (vitest, 35) covers time/stats/timer/parseNames/parseDropdownOptions/
-colors and `buildFillScript` validity + payload escaping. `cargo check` for the Rust.
+`npm test` (vitest) covers time/stats/timer/parseNames/parseDropdownOptions/
+colors, `buildFillScript` validity + payload escaping, the sync merge, and
+multi-device sync + persistence safety (`sync-v2.test.js`, in-memory Drive).
+`cd src-tauri && cargo test --lib storage` covers atomic save / corrupt load.
 No headless Fillout run here — the automation is verified live.
