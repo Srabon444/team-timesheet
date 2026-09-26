@@ -59,14 +59,19 @@ off `master`); only `desktop/` differs meaningfully between them.
 - **Extension** (`chrome.storage.local`): today's entries in `entries[]`,
   past days archived in `history{ date: entries[] }`, `timer{activeId,
   startedAt}`, plus `name/names/lastProject/lastCategory/dailyLimitHours/
-  confirmBeforeDelete/theme/warnedDate/draft/date`. Entry: `{id, project,
-  category, description, accSec, submitted}`.
-- **Desktop** (`app_data_dir/data.json`): unified `days{ date: entries[] }`,
-  `timer{activeId, startedAt, date}`, `submittedDays{ date:{at,method} }`,
-  same scalar settings. Entry shape matches the extension.
-- **Transfer bridge**: both export/import the same envelope
-  `{app:"team-timesheet", v:1, exportedAt, name, days}` (copy-paste, no
-  server). Settings → Backup & transfer in both.
+  confirmBeforeDelete/theme/warnedDate/draft/date`. Every change goes through
+  `TTData.withData` (data.js) — never write these keys from `S`.
+- **Desktop** (`app_data_dir/data.json`, atomic write + `data.json.bak`):
+  unified `days{ date: entries[] }`, `timer{activeId, startedAt, date}`, same
+  scalar settings. Activity log (`activity.log`) and recovery points
+  (`recovery/`) are separate files in the same folder.
+- **Both** (sync v2, `sync-core.js`, identical in both codebases): entry
+  `{id, project, category, description, accSec, submitted, updatedAt,
+  updatedBy}`; `deletedEntries{id: at}`, `deletedBy`, `submittedDays{date:
+  {at, method|null, by}}`, `clock`, `deviceId`. See ARCHITECTURE.md "Sync v2".
+- **Transfer bridge**: export/import the envelope `{app:"team-timesheet", v:2,
+  exportedAt, name, deviceId, days, deletedEntries, submittedDays, ...}`
+  (v1 still imports). Import/restore only ever adds tasks the user ticks.
 
 ## Commands
 
