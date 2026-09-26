@@ -14,7 +14,9 @@ import * as timer from "../src/lib/timer.js";
 import { parseNames, parseDropdownOptions } from "../src/lib/names.js";
 import { categoryColor, projectColor, DEFAULT_PROJECTS, DEFAULT_CATEGORIES } from "../src/lib/constants.js";
 import { buildFillScript } from "../src/lib/fillout-inject.js";
-import { mergeDays } from "../src/lib/gdrive.js";
+import "../src/lib/sync-core.js";
+
+const TT = globalThis.TTCore;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -260,35 +262,45 @@ describe("buildFillScript", () => {
   });
 });
 
-describe("Drive sync merge", () => {
+describe("Drive sync merge (sync-core.js)", () => {
+  const D = "2026-07-20";
+  const ids = (m) => (m.days[D] || []).map((e) => e.id).sort();
   it("keeps entries added on two offline devices — neither overrides the other", () => {
-    const phone = { "2026-07-20": [{ id: "A", description: "phone task" }] };
-    const desktop = { "2026-07-20": [{ id: "B", description: "desktop task" }] };
-    const m = mergeDays(phone, {}, desktop, {});
-    expect(m.days["2026-07-20"]).toHaveLength(2);
-    expect(m.days["2026-07-20"].map((e) => e.id).sort()).toEqual(["A", "B"]);
+    expect(ids(TT.merge([{ days: { [D]: [{ id: "A" }] } }, { days: { [D]: [{ id: "B" }] } }]))).toEqual(["A", "B"]);
   });
-  it("an empty local side does not erase Drive's entries", () => {
-    const m = mergeDays({}, {}, { "2026-07-20": [{ id: "A" }] }, {});
-    expect(m.days["2026-07-20"]).toHaveLength(1);
-  });
-  it("an empty Drive side does not erase local entries", () => {
-    const m = mergeDays({ "2026-07-20": [{ id: "A" }] }, {}, {}, {});
-    expect(m.days["2026-07-20"]).toHaveLength(1);
+  it("an empty side never erases the other side's entries, in either direction", () => {
+    expect(ids(TT.merge([{ days: {} }, { days: { [D]: [{ id: "A" }] } }]))).toEqual(["A"]);
+    expect(ids(TT.merge([{ days: { [D]: [{ id: "A" }] } }, {}]))).toEqual(["A"]);
   });
   it("a tombstoned entry is not resurrected from the other side's stale copy", () => {
-    const m = mergeDays(
-      { "2026-07-20": [] }, { A: Date.now() },
-      { "2026-07-20": [{ id: "A" }] }, {}
-    );
-    expect(m.days["2026-07-20"]).toBeUndefined();
-    expect(m.deleted).toHaveProperty("A");
+    const d = TT.ensureMeta({ deviceId: "dev" });
+    const e = TT.touch(d, { id: "A" });
+    TT.tombstone(d, "A");
+    const m = TT.merge([{ days: {}, deletedEntries: d.deletedEntries }, { days: { [D]: [e] } }]);
+    expect(m.days[D]).toBeUndefined();
+    expect(m.deletedEntries).toHaveProperty("A");
   });
-  it("same-id collision (edited on both sides while offline) deterministically prefers local", () => {
-    const m = mergeDays(
-      { "2026-07-20": [{ id: "A", description: "local edit" }] }, {},
-      { "2026-07-20": [{ id: "A", description: "drive edit" }] }, {}
-    );
-    expect(m.days["2026-07-20"][0].description).toBe("local edit");
+  it("a newer edit wins over a stale copy regardless of which side is local", () => {
+    const d = TT.ensureMeta({ deviceId: "dev" });
+    const old = TT.touch(d, { id: "A", description: "old" });
+    const neu = TT.touch(d, { ...old, description: "new" });
+    for (const order of [[old, neu], [neu, old]]) {
+      expect(TT.merge(order.map((x) => ({ days: { [D]: [x] } }))).days[D][0].description).toBe("new");
+    }
+  });
+  it("a restored entry beats the tombstone that removed it", () => {
+    const d = TT.ensureMeta({ deviceId: "dev", days: {} });
+    TT.tombstone(d, "A");
+    const added = TT.applyRestore(d, d.days, [{ date: D, entry: { id: "A", description: "back" } }]);
+    expect(added).toHaveLength(1);
+    expect(ids(TT.merge([{ days: d.days, deletedEntries: d.deletedEntries }]))).toEqual(["A"]);
+  });
+  it("timer engine stamps every change so it syncs", () => {
+    const data = TT.ensureMeta({ deviceId: "dev", days: {}, timer: { activeId: null, startedAt: null, date: null } });
+    const e = timer.addEntry(data, D, { project: "P", category: "C", description: "x" });
+    const t1 = e.updatedAt;
+    timer.editTime(data, D, e.id, "01:00");
+    expect(e.updatedAt).toBeGreaterThan(t1);
+    expect(e.updatedBy).toBe("dev");
   });
 });

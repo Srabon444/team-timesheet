@@ -6,6 +6,11 @@
 //   { days: { date: [entry] }, timer: { activeId, startedAt, date }, ... }
 // Persistence is the caller's (store's) job.
 import { todayStr, hhmmToSec } from "./time.js";
+import "./sync-core.js";
+
+//* Every change to an entry's content is stamped (TTCore.touch) so the sync merge can tell the
+//* newest version apart from another device's stale copy.
+const TT = globalThis.TTCore;
 
 export function entriesFor(data, date) {
   return data.days[date] || [];
@@ -30,7 +35,10 @@ export function foldActive(data) {
   const { activeId, startedAt, date } = data.timer;
   if (activeId && startedAt) {
     const e = findEntry(data, date, activeId);
-    if (e) e.accSec = (e.accSec || 0) + (Date.now() - startedAt) / 1000;
+    if (e) {
+      e.accSec = (e.accSec || 0) + (Date.now() - startedAt) / 1000;
+      TT.touch(data, e);
+    }
   }
   data.timer = { activeId: null, startedAt: null, date: null };
 }
@@ -48,6 +56,7 @@ export function editTime(data, date, id, hhmm) {
   const e = findEntry(data, date, id);
   if (!e) return;
   e.accSec = hhmmToSec(hhmm);
+  TT.touch(data, e);
   if (data.timer.activeId === id) data.timer.startedAt = Date.now(); // rebase running timer
 }
 
@@ -71,6 +80,7 @@ export function addEntry(data, date, { project, category, description }) {
     accSec: 0,
     submitted: false,
   };
+  TT.touch(data, entry);
   if (!data.days[date]) data.days[date] = [];
   data.days[date].push(entry);
   data.lastProject = project;
@@ -84,6 +94,7 @@ export function updateEntry(data, date, id, { project, category, description }) 
   e.project = project;
   e.category = category;
   e.description = description; // accSec and submitted are untouched
+  TT.touch(data, e);
   data.lastProject = project;
   data.lastCategory = category;
   return e;
@@ -103,6 +114,9 @@ export function pendingEntries(data, date) {
 export function markSubmitted(data, date, ids) {
   for (const id of ids) {
     const e = findEntry(data, date, id);
-    if (e) e.submitted = true;
+    if (e && !e.submitted) {
+      e.submitted = true;
+      TT.touch(data, e);
+    }
   }
 }
