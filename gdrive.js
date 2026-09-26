@@ -1,15 +1,10 @@
 "use strict";
-// Google Drive backup/restore for the extension. Uses chrome.identity
-// getAuthToken (OAuth client + scope declared in manifest "oauth2") and the
-// Drive v3 REST API with the drive.file scope — so the app only ever sees
-// files it created. Backups live in a "Team Timesheet Backups" folder in the
-// user's own Drive: a rolling `timesheet-latest.json` (overwritten each
-// backup) plus a dated snapshot per backup for history.
+// Google Drive backup/restore/sync for the extension. Auth is chrome.identity getAuthToken (OAuth
+// client + drive.file scope declared in manifest "oauth2"); the sync model and every Drive call
+// shape live in sync-core.js (TTCore), shared with the desktop apps. This file only supplies the
+// token, the HTTP transport and the atomic local commit (TTData, data.js).
 //
-// Plain-script globals (no modules) to match popup.js/tab.js; loaded before
-// tab.js in tab.html.
-
-const GD_FOLDER = "Team Timesheet Backups";
+// Plain-script globals (no modules) to match popup.js/tab.js.
 
 function gdToken(interactive) {
   return new Promise((resolve, reject) => {
@@ -52,232 +47,117 @@ async function gdApi(token, url, opts) {
   if (!res.ok) throw new Error("Drive " + res.status + ": " + (await res.text()).slice(0, 140));
   return res;
 }
+function gdHttp(token) {
+  return async (method, url, body, contentType) => {
+    const res = await gdApi(token, url, {
+      method,
+      body: body === undefined || body === null ? undefined : body,
+      headers: contentType ? { "Content-Type": contentType } : {},
+    });
+    return res.text();
+  };
+}
+const gdMeta = {
+  get: async (k) => (await chrome.storage.local.get("gd_" + k))["gd_" + k],
+  set: (k, v) => chrome.storage.local.set({ ["gd_" + k]: v }),
+};
 
-async function gdEnsureFolder(token) {
-  const q = encodeURIComponent(
-    `name='${GD_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`
-  );
-  const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)`);
-  const j = await r.json();
-  if (j.files && j.files.length) return j.files[0].id;
-  const cr = await gdApi(token, "https://www.googleapis.com/drive/v3/files?fields=id", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: GD_FOLDER, mimeType: "application/vnd.google-apps.folder" }),
+// Merge what Drive has into the CURRENT local data. Runs inside TTData.withData, i.e. under the
+// data lock against a fresh storage read, so an edit made while the network calls were in flight
+// is part of `d` here and survives.
+function gdCommitRemote(d, remote, devices) {
+  const before = TTCore.stateOf(d);
+  const merged = TTCore.merge([before, remote]);
+  const dif = TTCore.diff(before, merged);
+  //! Anything a sync removes gets a local recovery point first, so it can be picked back.
+  if (dif.removed.length) TTData.addRecoveryPoint(d, `before sync removed ${dif.removed.length} entr${dif.removed.length === 1 ? "y" : "ies"}`);
+  const running = d.timer && d.timer.activeId;
+  if (running && dif.removed.some((r) => r.e.id === running)) d.timer = { activeId: null, startedAt: null };
+  if (running && dif.changed.some((c) => c.after.id === running)) {
+    TTData.log(d, [{ type: "timer-conflict", id: running, detail: "entry with a running timer here was changed on another device; the other device's time was kept and this timer keeps adding to it" }]);
+  }
+  d.days = merged.days;
+  d.deletedEntries = merged.deletedEntries;
+  d.deletedBy = merged.deletedBy;
+  d.submittedDays = merged.submittedDays;
+  d.clock = Math.max(d.clock || 0, merged.clock);
+  if (dif.added.length || dif.removed.length || dif.changed.length) {
+    const added = dif.added.length > 20 ? { ...dif, added: [] } : dif;
+    TTData.log(d, [{ type: "sync-pull", added: dif.added.length, removed: dif.removed.length, changed: dif.changed.length },
+      ...TTCore.diffEvents(added, "sync", devices)]);
+  }
+  return { final: merged, diff: dif };
+}
+
+async function gdIo(token) {
+  let st = await chrome.storage.local.get(["deviceId", "name"]);
+  if (!st.deviceId) st = { ...st, deviceId: (await TTData.withData(() => {})).doc.deviceId };
+  return {
+    http: gdHttp(token), deviceId: st.deviceId, deviceName: TTData.DEVICE_NAME, name: st.name || "",
+    meta: gdMeta,
+    log: (evs) => TTData.withData((d) => TTData.log(d, evs)),
+    onLegacyClient: () => chrome.storage.local.set({ gdLegacyClientAt: Date.now() }),
+    commit: async (remote, devices) => (await TTData.withData((d) => gdCommitRemote(d, remote, devices))).result,
+  };
+}
+
+// interactive=false → silent (skip if not connected). Returns a short status string, or "".
+//* "tt-sync" serializes whole syncs across this device's windows (they share one device file on
+//* Drive); it is a separate lock from the data lock, so edits never wait on the network.
+async function gdSync(interactive) {
+  let token;
+  try { token = await gdToken(!!interactive); } catch (e) { return interactive ? "Not connected." : ""; }
+  return TTData.lock("tt-sync", async () => {
+    const io = await gdIo(token);
+    let r;
+    try {
+      r = await TTCore.sync(io);
+    } catch (e) {
+      await io.log([{ type: "sync-error", error: String(e && e.message || e) }]);
+      throw e;
+    }
+    if (r.pushed || r.pulled) await io.log([{ type: "sync", status: r.status }]);
+    await gdIngestSubmitted();
+    return r.status;
   });
-  return (await cr.json()).id;
 }
 
-async function gdCreateFile(token, folderId, name, content) {
-  const boundary = "ttb" + Math.random().toString(16).slice(2);
-  const meta = { name, parents: [folderId], mimeType: "application/json" };
-  const body =
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
-    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
-  const res = await gdApi(
-    token,
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name",
-    { method: "POST", headers: { "Content-Type": `multipart/related; boundary=${boundary}` }, body }
-  );
-  return res.json();
-}
-async function gdUpdateFile(token, fileId, content) {
-  const res = await gdApi(
-    token,
-    `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,name`,
-    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: content }
-  );
-  return res.json();
+// Dashboard ingest for every day marked submitted, from the post-merge data — so a day submitted
+// on ANOTHER device (pulled in by this sync) is pushed too.
+async function gdIngestSubmitted() {
+  if (typeof pushIngest !== "function") return;
+  const st = await chrome.storage.local.get(["entries", "history", "date", "submittedDays"]);
+  const days = { ...(st.history || {}), [st.date]: st.entries || [] };
+  for (const [date, info] of Object.entries(st.submittedDays || {})) {
+    if (!TTCore.isMarked(info)) continue;
+    const list = days[date] || [];
+    if (!list.length) continue;
+    const entries = list.map((e) => ({
+      id: e.id, project: e.project, category: e.category, description: e.description, seconds: Math.round(e.accSec || 0),
+    }));
+    await pushIngest(date, info.method, entries).catch((e) => console.error("pushIngest failed for", date, e));
+  }
 }
 
-// Snapshot the CURRENT (post-merge) canonical state as a dated backup file.
-// Runs gdSync first — never snapshots this device's raw local view, which
-// could be missing entries another device added while this one was offline;
-// throws rather than ever writing an empty snapshot. Returns true if a
-// snapshot was actually written, false if skipped (nothing changed since the
-// last one).
+// Dated snapshot of this device's post-sync state. Returns true if written, false if skipped
+// (nothing changed since the last one); throws rather than ever writing an empty snapshot.
 //! interactive=false for anything fired off a plain click — the consent window takes focus and
 //! destroys the popup mid-call. Only the full view's explicit "Back up now" should prompt.
 async function gdBackupNow(interactive) {
   if (interactive === undefined) interactive = true;
   await gdSync(interactive);
   const token = await gdToken(interactive);
-  const folderId = await gdEnsureFolder(token);
-  const latest = await gdFindLatest(token, folderId);
-  if (!latest) throw new Error("Nothing to back up yet — add an entry first.");
-  //? A dated snapshot used to get written unconditionally on every call (once/day auto-backup,
-  //? or any manual click) even with zero net change, cluttering Drive with identical copies —
-  //? and, worse, making it harder to spot the one dated snapshot from just before a real problem.
-  //? Compare against the signature of the last dated snapshot actually written and skip if nothing
-  //? moved (exportedAt always differs, so compare the same days/submittedDays/deletedEntries triple
-  //? gdSync already uses to detect real change, not the raw JSON).
-  let latestObj = null;
-  try { latestObj = JSON.parse(latest.content); } catch (e) { latestObj = null; }
-  const sig = gdSig(latestObj && latestObj.days, latestObj && latestObj.submittedDays, latestObj && latestObj.deletedEntries);
-  const store = await chrome.storage.local.get(["gdLastBackupSig"]);
-  if (store.gdLastBackupSig === sig) return false;
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, "0");
-  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-  const name = `timesheet-${stamp}.json`;
-  //? Stamps are minute-resolution and Drive allows duplicate names, so two snapshots in one
-  //? minute produced two indistinguishable files. Overwrite the minute's snapshot instead.
-  const existing = await gdFindByName(token, folderId, name);
-  if (existing) await gdUpdateFile(token, existing, latest.content);
-  else await gdCreateFile(token, folderId, name, latest.content);
-  await chrome.storage.local.set({ gdLastBackupSig: sig });
-  return true;
-}
-
-async function gdFindByName(token, folderId, name) {
-  const q = encodeURIComponent(`name='${name}' and '${folderId}' in parents and trashed=false`);
-  const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
-  const j = await r.json();
-  return j.files && j.files.length ? j.files[0].id : null;
+  const io = await gdIo(token);
+  const st = await chrome.storage.local.get(null);
+  const state = TTCore.stateOf(TTData.toDoc(st));
+  const wrote = await TTCore.snapshot(io, state);
+  if (wrote) await io.log([{ type: "backup", entries: TTCore.counts(state).entries }]);
+  return wrote;
 }
 
 async function gdListBackups(token) {
-  const folderId = await gdEnsureFolder(token);
-  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType='application/json'`);
-  const r = await gdApi(
-    token,
-    `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)`
-  );
-  return (await r.json()).files || [];
+  return TTCore.listBackups(gdHttp(token));
 }
 async function gdDownload(token, id) {
-  const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
-  return r.text();
-}
-
-// ---- Cross-device sync ------------------------------------------------------
-// The rolling timesheet-latest.json is the sync anchor. Unlike the earlier
-// "whichever side changed last wins, whole state replaced" design, this
-// MERGES: every entry (by its stable id) that exists on either side survives,
-// so two devices that each added tasks while offline both keep their tasks
-// when they reconnect — neither side's edits get silently discarded. An
-// entry only disappears when it's explicitly deleted (tombstoned in
-// `deletedEntries`, unioned across devices so a delete on one device still
-// takes effect everywhere once merged in). Because merging can only ever
-// UNION data in, the merged result can never be smaller than either side
-// UNLESS something was actually, deliberately deleted — an empty side can
-// never silently erase a non-empty one, structurally, not just by a guard.
-
-function gdTotalEntries(daysMap) {
-  return Object.values(daysMap || {}).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0);
-}
-// Signature of the full syncable state (order-independent over dates/ids),
-// so any real difference — including a tombstone-only or submitted-only
-// change — is detected without per-mutation bookkeeping.
-function gdSig(days, submittedDays, deletedEntries) {
-  const norm = (m) => Object.keys(m || {}).sort().map((k) => [k, m[k]]);
-  const s = JSON.stringify([norm(days), norm(submittedDays), norm(deletedEntries)]);
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return String(h >>> 0);
-}
-// Union-merge two days maps by entry id, then drop anything tombstoned by
-// either side. On an exact id collision (same entry touched on both sides
-// while offline) local wins — a plain, deterministic tie-break; there's no
-// per-entry modified-time to do better than that today. Pure/testable.
-function gdMergeDays(localDays, localDeleted, driveDays, driveDeleted) {
-  const deleted = { ...(driveDeleted || {}), ...(localDeleted || {}) };
-  const dates = new Set([...Object.keys(localDays || {}), ...Object.keys(driveDays || {})]);
-  const days = {};
-  for (const date of dates) {
-    const byId = new Map();
-    for (const e of (driveDays || {})[date] || []) byId.set(e.id, e);
-    for (const e of (localDays || {})[date] || []) byId.set(e.id, e);
-    const list = [...byId.values()].filter((e) => !(e.id in deleted));
-    if (list.length) days[date] = list;
-  }
-  return { days, deleted };
-}
-
-async function gdFindLatest(token, folderId) {
-  const q = encodeURIComponent(`name='timesheet-latest.json' and '${folderId}' in parents and trashed=false`);
-  const r = await gdApi(token, `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`);
-  const j = await r.json();
-  if (!j.files || !j.files.length) return null;
-  const id = j.files[0].id;
-  return { id, content: await gdDownload(token, id) };
-}
-async function gdWriteLatest(token, folderId, id, text) {
-  if (id) return gdUpdateFile(token, id, text);
-  return gdCreateFile(token, folderId, "timesheet-latest.json", text);
-}
-// interactive=false → silent (skip if not connected). Returns a short status
-// string describing what happened, or "" if nothing/not connected.
-async function gdSync(interactive) {
-  if (typeof buildExportText !== "function") return ""; // not in a data context
-  let token;
-  try { token = await gdToken(!!interactive); } catch (e) { return interactive ? "Not connected." : ""; }
-  //! Refresh this context's own state from storage FIRST — see
-  //! refreshLocalStateFromStorage()'s comment. Without this, a stale context's
-  //! outdated snapshot can win an id collision against Drive's fresher copy
-  //! and get written straight back into storage below.
-  if (typeof refreshLocalStateFromStorage === "function") await refreshLocalStateFromStorage();
-
-  const folderId = await gdEnsureFolder(token);
-  const latest = await gdFindLatest(token, folderId);
-  const localObj = JSON.parse(buildExportText());
-  const localDeleted = localObj.deletedEntries || {};
-
-  let driveObj = null;
-  if (latest) { try { driveObj = JSON.parse(latest.content); } catch (e) { driveObj = null; } }
-  const driveDays = (driveObj && typeof driveObj.days === "object") ? driveObj.days : {};
-  const driveSubmitted = (driveObj && driveObj.submittedDays) || {};
-  const driveDeleted = (driveObj && driveObj.deletedEntries) || {};
-
-  const { days: mergedDays, deleted: mergedDeleted } = gdMergeDays(localObj.days, localDeleted, driveDays, driveDeleted);
-  const mergedSubmitted = { ...driveSubmitted, ...(localObj.submittedDays || {}) };
-
-  // Bulk ingest past submitted data to the Dashboard. Reads from mergedDays
-  // (not localObj.days) so a day submitted on ANOTHER device — pulled in
-  // only by this merge — gets pushed too, not just days this device already
-  // had locally.
-  if (typeof pushIngest === "function") {
-    for (const [date, info] of Object.entries(mergedSubmitted)) {
-      if (info && info.method) {
-        const list = mergedDays[date] || [];
-        if (list.length) {
-          const entries = list.map((e) => ({
-            id: e.id, project: e.project, category: e.category,
-            description: e.description, seconds: Math.round(e.accSec || 0),
-          }));
-          await pushIngest(date, info.method, entries).catch((e) => console.error("pushIngest failed for", date, e));
-        }
-      }
-    }
-  }
-
-  // Never write an empty backup, in either direction. Structurally the merge
-  // above can't produce an empty result unless both sides genuinely have
-  // nothing (or everything present was explicitly deleted) — this is the
-  // last line of defense, not the main mechanism.
-  if (gdTotalEntries(mergedDays) === 0) {
-    return latest ? "Already in sync." : "Nothing to back up yet — add an entry first.";
-  }
-
-  const localSig = gdSig(localObj.days, localObj.submittedDays, localDeleted);
-  const driveSig = gdSig(driveDays, driveSubmitted, driveDeleted);
-  const mergedSig = gdSig(mergedDays, mergedSubmitted, mergedDeleted);
-
-  let pulled = false, pushed = false;
-  if (mergedSig !== localSig) {
-    await applyBackupData({ days: mergedDays, submittedDays: mergedSubmitted, deletedEntries: mergedDeleted, name: localObj.name });
-    pulled = true;
-  }
-  if (mergedSig !== driveSig) {
-    const fresh = JSON.stringify(
-      { ...localObj, days: mergedDays, submittedDays: mergedSubmitted, deletedEntries: mergedDeleted, exportedAt: Date.now() },
-      null, 2
-    );
-    await gdWriteLatest(token, folderId, latest ? latest.id : null, fresh);
-    pushed = true;
-  }
-  if (pulled && pushed) return "Synced (merged this device's and Drive's changes).";
-  if (pulled) return "Synced (pulled from Drive).";
-  if (pushed) return "Synced (pushed to Drive).";
-  return "Already in sync.";
+  return gdHttp(token)("GET", `https://www.googleapis.com/drive/v3/files/${id}?alt=media`);
 }

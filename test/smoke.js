@@ -4,7 +4,9 @@ const { JSDOM } = require("jsdom");
 
 const ROOT = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(ROOT, "popup.html"), "utf8");
-const jsSrc = fs.readFileSync(path.join(ROOT, "popup.js"), "utf8");
+//* popup.html loads sync-core.js + data.js ahead of popup.js; every harness that injects "popup.js"
+//* gets the same stack.
+const jsSrc = ["sync-core.js", "data.js", "popup.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let fails = 0;
@@ -407,6 +409,11 @@ async function harness1() {
   A(store.history[outgoingDate][0].description === "Archived task" && store.history[outgoingDate][0].accSec === 3600, "archived entry keeps its description and folded time");
   A(store.entries.length === 0, "entries still clear on rollover after archiving");
   A(store.date === "2099-01-01", "date advances to the new day");
+  //* Back to the real calendar before the tests below; the data layer rolls on every write, so the
+  //* fake 2099 day must be settled first or every later add would land under it.
+  store.history = {}; store.entries = []; store.date = realTodayStr();
+  await win.init();
+  await sleep(30);
 
   // first-ever run (no prior S.date at all) must NOT write a bogus history entry
   const store2 = {};
@@ -817,6 +824,7 @@ async function harness3() {
     runtime: {
       onInstalled: { addListener: (fn) => listeners.installed.push(fn) },
       onStartup: { addListener: (fn) => listeners.startup.push(fn) },
+      onMessage: { addListener: (fn) => { listeners.message = fn; } },
     },
   };
   // simulates a real chrome.storage.local.set: mutates store, fires onChanged
@@ -828,8 +836,7 @@ async function harness3() {
   // background.js importScripts()es the prayer helpers into its own global scope; concatenating
   // them ahead of it is what that actually does, so the call itself becomes a no-op here.
   const swPreamble =
-    fs.readFileSync(path.join(ROOT, "prayer.js"), "utf8") + "\n" +
-    fs.readFileSync(path.join(ROOT, "prayer-hadiths.js"), "utf8") + "\n";
+    ["prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n") + "\n";
   const fn = new Function("chrome", "importScripts", swPreamble + bgSrc + "\n//# sourceURL=background.js");
   fn(chrome, () => {});
   await sleep(20); // let the top-level syncBadge() resolve
@@ -1110,6 +1117,13 @@ async function harness5() {
   store.history = { "2026-07-01": [{ id: "old", project: "VSB", category: "Development", accSec: 500 }] };
   await win.init();
   await sleep(20);
+  A($("resetEverything").disabled, "Reset stays disabled until RESET is typed");
+  await win.resetEverything();
+  await sleep(20);
+  A($("confirmOverlay").classList.contains("hidden") && store.entries.length === 1, "calling reset without typing RESET does nothing (checked in the handler, not just the button)");
+  $("resetConfirmInput").value = "RESET";
+  $("resetConfirmInput").dispatchEvent(new win.Event("input"));
+  A(!$("resetEverything").disabled, "typing RESET enables the button");
   $("resetEverything").click();
   await sleep(20);
   A(!$("confirmOverlay").classList.contains("hidden"), "Reset everything shows the confirm modal (never native confirm())");
@@ -1188,95 +1202,131 @@ async function harness6() {
 // HARNESS 7 — Drive sync merge (pure functions from gdrive.js)
 // ============================================================
 async function harness7() {
-  console.log("\n== Harness 7: Drive sync merge ==");
-  const gdSrc = fs.readFileSync(path.join(ROOT, "gdrive.js"), "utf8");
-  const ctx = {};
+  console.log("\n== Harness 7: sync v2 core (merge, clock, restore) ==");
   const vm = require("vm");
+  const ctx = { crypto: require("crypto").webcrypto, Date, Math, JSON };
   vm.createContext(ctx);
-  vm.runInContext(gdSrc, ctx);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, "sync-core.js"), "utf8"), ctx);
+  const C = ctx.TTCore;
+  const D = "2026-07-20";
+  const ids = (st) => (st.days[D] || []).map((e) => e.id).sort().join(",");
+  const dev = (id) => C.ensureMeta({ deviceId: id, days: {} });
 
-  A(ctx.gdTotalEntries({ "2026-07-01": [{}, {}], "2026-07-02": [{}] }) === 3, "gdTotalEntries sums entries across all days");
-  A(ctx.gdTotalEntries({}) === 0, "gdTotalEntries of no days is 0");
-  A(ctx.gdTotalEntries({ "2026-07-01": [] }) === 0, "gdTotalEntries of an empty day is 0");
+  // Offline adds on two devices both survive.
+  let m = C.merge([{ days: { [D]: [{ id: "A" }] } }, { days: { [D]: [{ id: "B" }] } }]);
+  A(ids(m) === "A,B", "entries added on two offline devices both survive the merge");
+  A(ids(C.merge([{ days: {} }, { days: { [D]: [{ id: "A" }] } }])) === "A", "an empty side cannot erase the other side's entries");
+  A(ids(C.merge([{ days: { [D]: [{ id: "A" }] } }, {}])) === "A", "...in either direction");
 
-  // The actual scenario: phone (offline) added task A, desktop (offline)
-  // added task B on the same day — both must survive the merge, not one
-  // override the other.
-  const phone = { "2026-07-20": [{ id: "A", description: "phone task" }] };
-  const desktop = { "2026-07-20": [{ id: "B", description: "desktop task" }] };
-  let m = ctx.gdMergeDays(phone, {}, desktop, {});
-  A(m.days["2026-07-20"].length === 2, "entries added on two offline devices both survive the merge");
-  A(m.days["2026-07-20"].some((e) => e.id === "A") && m.days["2026-07-20"].some((e) => e.id === "B"),
-    "merge keeps both devices' entries by id, not just one side");
+  // Deletes stick, and a newer write beats an older tombstone (restore).
+  const a = dev("devA");
+  const e = C.touch(a, { id: "X", project: "P", description: "v1" });
+  C.tombstone(a, "X");
+  m = C.merge([{ days: { [D]: [e] }, deletedEntries: a.deletedEntries }, { days: { [D]: [{ ...e }] } }]);
+  A(ids(m) === "", "a tombstoned entry is not resurrected by another device's stale copy");
+  const restored = C.touch(a, { ...e });
+  m = C.merge([{ days: { [D]: [restored] }, deletedEntries: a.deletedEntries }, { days: { [D]: [e] }, deletedEntries: a.deletedEntries }]);
+  A(ids(m) === "X", "a restored entry (fresh stamp) beats the tombstone that removed it");
 
-  // A completely empty side must never erase the other's data — this is
-  // the actual incident: Reset (or a bad Restore) emptied one side.
-  m = ctx.gdMergeDays({}, {}, { "2026-07-20": [{ id: "A" }] }, {});
-  A(m.days["2026-07-20"].length === 1, "an empty local side does not erase Drive's entries");
-  m = ctx.gdMergeDays({ "2026-07-20": [{ id: "A" }] }, {}, {}, {});
-  A(m.days["2026-07-20"].length === 1, "an empty Drive side does not erase local entries");
+  // Newest edit wins no matter which side is "local", even with a clock running behind.
+  const b = dev("devB");
+  const old = C.touch(a, { id: "T", description: "old" });
+  b.clock = old.updatedAt; // devB has seen A's version...
+  const realNow = ctx.Date.now;
+  ctx.Date.now = () => old.updatedAt - 3600e3; // ...and its wall clock is an hour behind
+  const newer = C.touch(b, { ...old, description: "new" });
+  ctx.Date.now = realNow;
+  A(newer.updatedAt > old.updatedAt, "a device with a slow clock still stamps later than anything it has seen");
+  for (const order of [[old, newer], [newer, old]]) {
+    m = C.merge(order.map((x) => ({ days: { [D]: [x] } })));
+    A(m.days[D][0].description === "new", "newest edit wins regardless of merge order");
+  }
 
-  // Deleting an entry (tombstoned) must actually stick, not get resurrected
-  // by the other side's stale pre-delete copy.
-  m = ctx.gdMergeDays(
-    { "2026-07-20": [] }, { A: Date.now() },              // this device deleted A
-    { "2026-07-20": [{ id: "A" }] }, {}                     // Drive still has the old copy
-  );
-  A(!m.days["2026-07-20"], "a tombstoned entry is not resurrected from the other side's stale copy");
-  A("A" in m.deleted, "merge carries the tombstone forward");
+  // Legacy (unstamped) same-id collision picks the same winner everywhere.
+  const l1 = { id: "L", description: "x", accSec: 60 }, l2 = { id: "L", description: "y", accSec: 120 };
+  A(C.merge([{ days: { [D]: [l1] } }, { days: { [D]: [l2] } }]).days[D][0].accSec === 120 &&
+    C.merge([{ days: { [D]: [l2] } }, { days: { [D]: [l1] } }]).days[D][0].accSec === 120,
+  "an unstamped legacy collision resolves the same way in both orders (more tracked time wins)");
 
-  // Same id edited on both sides while offline needs a deterministic pick —
-  // local wins (documented tie-break, not a "correct" resolution).
-  m = ctx.gdMergeDays(
-    { "2026-07-20": [{ id: "A", description: "local edit" }] }, {},
-    { "2026-07-20": [{ id: "A", description: "drive edit" }] }, {}
-  );
-  A(m.days["2026-07-20"][0].description === "local edit", "same-id collision deterministically prefers local");
+  // submittedDays: unmark is stamped and beats an older mark; legacy null gets a stamp once.
+  const s = dev("devS");
+  C.setSubmitted(s, D, "manual");
+  const marked = { ...s.submittedDays };
+  C.setSubmitted(s, D, null);
+  A(!C.isMarked(C.merge([{ submittedDays: marked }, { submittedDays: s.submittedDays }]).submittedDays[D]), "a later unmark beats an earlier mark in both orders");
+  A(!C.isMarked(C.merge([{ submittedDays: s.submittedDays }, { submittedDays: marked }]).submittedDays[D]), "...either way round");
+  const leg = C.ensureMeta({ deviceId: "z", submittedDays: { [D]: null } });
+  A(leg.submittedDays[D] && leg.submittedDays[D].at > 0 && !C.isMarked(leg.submittedDays[D]), "a legacy null unmark is converted to a stamped unmark");
+
+  // Algebra: random states merge the same in any order and grouping, and merging twice changes nothing.
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const randState = () => {
+    const st = { days: {}, deletedEntries: {}, submittedDays: {} };
+    for (let i = 0; i < 6; i++) {
+      const date = "2026-07-" + (10 + rnd(3));
+      (st.days[date] = st.days[date] || []).push({ id: "e" + rnd(8), description: "d" + rnd(5), accSec: rnd(4) * 60, updatedAt: rnd(5) * 1000, updatedBy: "dev" + rnd(3) });
+    }
+    if (rnd(2)) st.deletedEntries["e" + rnd(8)] = rnd(5) * 1000 + 500;
+    st.submittedDays["2026-07-1" + rnd(3)] = { at: rnd(5), method: rnd(2) ? "auto" : null, by: "dev" + rnd(3) };
+    return st;
+  };
+  let algebraOk = true;
+  for (let i = 0; i < 300; i++) {
+    const x = randState(), y = randState(), z = randState();
+    const s1 = C.sig(C.merge([x, y, z])), s2 = C.sig(C.merge([z, x, y])), s3 = C.sig(C.merge([C.merge([x, y]), z]));
+    const s4 = C.sig(C.merge([x, C.merge([y, z])])), s5 = C.sig(C.merge([C.merge([x, y, z]), x, y]));
+    if (!(s1 === s2 && s2 === s3 && s3 === s4 && s4 === s5)) { algebraOk = false; break; }
+  }
+  A(algebraOk, "300 random triples: merge is commutative, associative and idempotent (all devices converge)");
+
+  const junk = C.merge([{ days: { [D]: [{ id: "legacyX" }] }, deletedEntries: { legacyX: "NaN" } }, { deletedEntries: { legacyX: 0 } }]);
+  A(ids(junk) === "legacyX", "a junk or zero tombstone never deletes an entry");
+
+  // Restore candidates + apply.
+  const cur = { days: { [D]: [{ id: "keep" }] } };
+  const backup = { days: { [D]: [{ id: "keep" }, { id: "gone", description: "lost one", accSec: 90 }], "2026-07-01": [{ id: "old" }] } };
+  const cands = C.restoreCandidates(cur, backup);
+  A(cands.length === 2 && !cands.some((c) => c.entry.id === "keep"), "restore offers only tasks missing now, never ones already here");
+  const d = dev("devR");
+  d.days = { [D]: [{ id: "keep" }] };
+  d.deletedEntries.gone = C.stamp(d);
+  const added = C.applyRestore(d, d.days, [cands.find((c) => c.entry.id === "gone")]);
+  A(added.length === 1 && C.isLive(added[0].e, d.deletedEntries), "an applied restore is live despite the tombstone that removed it");
+  A(C.applyRestore(d, d.days, [cands.find((c) => c.entry.id === "gone")]).length === 0, "restoring the same task twice does not duplicate it");
+
+  // Diff describes a remote delete with its source.
+  const before = { days: { [D]: [{ id: "k1", project: "P", description: "gone soon" }] } };
+  const after = C.merge([before, { deletedEntries: { k1: 99 }, deletedBy: { k1: "devPhone" } }]);
+  const evs = C.diffEvents(C.diff(before, after), "sync", { devPhone: "Android" });
+  A(evs.length === 1 && evs[0].type === "removed" && evs[0].reason.includes("Android"), "the log names which device deleted a removed task");
 }
 
-// Regression test for the "previous day's entries vanish" bug: tab.html
-// keeps its own long-lived copy of popup.js's S — if it's ever left open
-// across a day rollover, its in-memory S.history goes stale (it never
-// re-runs init()). Before patchHistoryDay(), any write from that stale
-// context did `chrome.storage.local.set({ history: S.history })` — a blind
-// full-object replace — silently erasing whatever another context (e.g. a
-// fresh popup) had just archived. This proves the merge-on-write fix holds.
+// Regression test for the "previous day's entries vanish" bug: a long-open
+// tab.html used to write its own stale copy of S over what another window had
+// just saved. Every change now goes through TTData.withData (lock + fresh read).
 async function harness8() {
-  console.log("\n== Harness 8: history merge-on-write (stale second context) ==");
-  const store = {}; // shared backing store simulating the one real chrome.storage.local
-  const chromeMock = {
-    storage: { local: {
-      get: async (k) => (k === null ? { ...store } : {}),
-      set: async (obj) => { Object.assign(store, obj); },
-    } },
-  };
-  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
-  dom.window.chrome = chromeMock;
-  dom.window.crypto = { randomUUID: () => "id-x" };
-  // jsdom fires its own real DOMContentLoaded asynchronously — racing it
-  // against direct calls below would let init() run concurrently and stomp
-  // the store. Neuter the listener registration so popup.js's wiring
-  // (init()/route()) never fires; only patchHistoryDay itself is under test.
-  dom.window.document.addEventListener = () => {};
-  const s = dom.window.document.createElement("script");
-  s.textContent = jsSrc;
-  dom.window.document.body.appendChild(s);
-  const win = dom.window;
-
-  // "Context A" (e.g. a fresh popup) archives day X.
-  win.S.history = {};
-  await win.patchHistoryDay("2026-08-10", [{ id: "e1", description: "day X entry" }]);
-  A(store.history["2026-08-10"].length === 1, "context A's archive lands in storage");
-
-  // "Context B" is stale — its in-memory S.history predates day X entirely,
-  // same shape a long-open tab.html tab would have — then writes day Y.
-  win.S.history = {};
-  await win.patchHistoryDay("2026-08-11", [{ id: "e2", description: "day Y entry" }]);
-  A(store.history["2026-08-10"] && store.history["2026-08-10"].length === 1,
-    "a stale second context writing a DIFFERENT day does not erase day X");
-  A(store.history["2026-08-11"] && store.history["2026-08-11"].length === 1,
-    "day Y is also present after the second context's write");
-  dom.window.close();
+  console.log("\n== Harness 8: two windows, one storage — no window erases another's write ==");
+  const store = {};
+  const locks = makeLocks();
+  const w1 = makeDataContext(store, locks);
+  const w2 = makeDataContext(store, locks);
+  const today = w1.todayStr();
+  // Window 1 opened long ago (stale cache); window 2 adds to another day and to today.
+  w1.S = await w1.chrome.storage.local.get(null);
+  await w2.mutate((d) => { w2.TTData.list(d, "2026-08-10").push({ id: "x1", description: "day X" }); });
+  await w2.mutate((d) => { w2.TTData.list(d, today).push({ id: "t1", description: "today from w2" }); });
+  await w1.mutate((d) => { w1.TTData.list(d, "2026-08-11").push({ id: "y1", description: "day Y" }); });
+  await w1.mutate((d) => { w1.TTData.list(d, today).push({ id: "t2", description: "today from w1" }); });
+  A(store.history["2026-08-10"] && store.history["2026-08-11"], "writes to different days from two windows both survive");
+  A(store.entries.map((e) => e.id).sort().join(",") === "t1,t2", "adds to today from two windows both survive");
+  // Interleaved: both windows start a change at the same moment.
+  await Promise.all([
+    w1.mutate((d) => { w1.TTData.list(d, today).push({ id: "c1" }); }),
+    w2.mutate((d) => { w2.TTData.list(d, today).push({ id: "c2" }); }),
+  ]);
+  A(["c1", "c2"].every((id) => store.entries.some((e) => e.id === id)), "two simultaneous changes are serialized by the lock, neither lost");
+  w1.close(); w2.close();
 }
 
 // ============================================================
@@ -1319,22 +1369,17 @@ async function harness9() {
   // The bug this guards: `delete`-ing the key left nothing for the Drive merge
   // ({...drive, ...local}) to override, so the day came back marked ~2.5s later.
   A(DAY in store.submittedDays, "unmark leaves a tombstone in storage, not a missing key");
-  A(store.submittedDays[DAY] === null, "the tombstone is an explicit null");
+  A(store.submittedDays[DAY].method === null && store.submittedDays[DAY].at > 0, "the tombstone is a stamped unmark");
   const drive = { [DAY]: { at: 1, method: "manual" } };
-  const merged = { ...drive, ...store.submittedDays };
-  A(merged[DAY] === null, "a Drive copy that still has the day marked cannot resurrect it");
+  const merged = win.TTCore.merge([{ submittedDays: drive }, { submittedDays: store.submittedDays }]);
+  A(!win.TTCore.isMarked(merged.submittedDays[DAY]), "a Drive copy that still has the day marked cannot resurrect it");
 
-  // A tombstone must never crash the listener that pushes to the dashboard.
+  // Same branch the storage listener takes for the dashboard push.
   const seen = [];
-  win.pushIngest = async (d) => seen.push(["ingest", d]);
-  win.pushUnmark = async (d) => seen.push(["unmark", d]);
-  let threw = null;
-  try {
-    for (const [date, info] of Object.entries(store.submittedDays)) {
-      if (info) { win.pushIngest(date, info.method); } else if (drive[date]) { win.pushUnmark(date); }
-    }
-  } catch (e) { threw = e; }
-  A(threw === null, "reading a tombstoned day does not throw on info.method");
+  for (const [date, info] of Object.entries(store.submittedDays)) {
+    if (win.TTCore.isMarked(info)) seen.push(["ingest", date]);
+    else if (win.TTCore.isMarked(drive[date])) seen.push(["unmark", date]);
+  }
   A(seen.length === 1 && seen[0][0] === "unmark", "a tombstoned day pushes an unmark, not an ingest");
   dom.window.close();
 }
@@ -1470,11 +1515,10 @@ async function harness10() {
     alarms: { create: (n, c) => { alarms[n] = c; }, clear: (n) => { delete alarms[n]; },
               onAlarm: { addListener: (fn) => listeners.alarm.push(fn) } },
     notifications: { create: (id, o) => notes.push({ id, ...o }) },
-    runtime: { onInstalled: { addListener: () => {} }, onStartup: { addListener: () => {} } },
+    runtime: { onInstalled: { addListener: () => {} }, onStartup: { addListener: () => {} }, onMessage: { addListener: () => {} } },
   };
   const swPreamble =
-    fs.readFileSync(path.join(ROOT, "prayer.js"), "utf8") + "\n" +
-    fs.readFileSync(path.join(ROOT, "prayer-hadiths.js"), "utf8") + "\n";
+    ["prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n") + "\n";
   const bg = new Function("chrome", "importScripts",
     swPreamble + fs.readFileSync(path.join(ROOT, "background.js"), "utf8"));
   bg(chromeMock, () => {});
@@ -1552,7 +1596,7 @@ function PRAYER_COUNT_PROBE(ctx) {
 
 // ============================================================
 // HARNESS 11 — day rollover: future-day migration + stale-window adoption,
-// and writeTodayEntries()'s merge-on-write for the live day.
+// and a stale window's write applied to fresh storage (TTData.withData).
 // ============================================================
 // Regression tests for two bugs traced from the same root cause (no
 // re-read-before-write on `entries`, unlike patchHistoryDay which already
@@ -1568,7 +1612,7 @@ async function harness11() {
   const store = {};
   const chromeMock = {
     storage: { local: {
-      get: async (k) => (k === null ? { ...store } : Object.fromEntries(k.map((x) => [x, store[x]]))),
+      get: async (k) => (k === null ? { ...store } : Object.fromEntries((Array.isArray(k) ? k : [k]).map((x) => [x, store[x]]))),
       set: async (obj) => { Object.assign(store, obj); },
     } },
   };
@@ -1620,9 +1664,8 @@ async function harness11() {
     "adopts the other context's already-live entries instead of blowing them away with an empty reset");
   win.todayStr = realTodayStr;
 
-  // --- Part C: writeTodayEntries() merges by id against storage instead of blind-replacing ---
-  win.S.date = "2026-09-20";
-  win.S.timer = { activeId: null, startedAt: null };
+  // --- Part C: a stale window's change is applied to fresh storage, not its own old copy ---
+  win.todayStr = () => "2026-09-20";
   store.date = "2026-09-20";
   store.entries = [
     { id: "e1", project: "ZuPOS", category: "Development", description: "one", accSec: 100 },
@@ -1630,24 +1673,15 @@ async function harness11() {
   ];
   store.deletedEntries = {};
   win.viewDate = "2026-09-20";
-  // "Context B": a stale copy missing e2 (added by another window after this
-  // one last synced), plus a genuinely new local add.
-  win.S.entries = [
-    store.entries[0],
-    { id: "e3", project: "ZuPOS", category: "Development", description: "three (new here)", accSec: 300 },
-  ];
-  win.S.deletedEntries = {};
-  await win.persistCurrent();
-  const idsAfterAdd = store.entries.map((e) => e.id).sort();
-  A(JSON.stringify(idsAfterAdd) === JSON.stringify(["e1", "e2", "e3"]),
-    "a stale window's write keeps the OTHER window's entry (e2) instead of erasing it, and still adds its own (e3)");
-
-  // Deleting locally must actually stick against a storage copy that still has it.
-  win.S.entries = win.S.entries.filter((e) => e.id !== "e3");
-  win.S.deletedEntries = { e3: Date.now() };
-  await win.persistCurrent();
-  A(!store.entries.some((e) => e.id === "e3"), "a local delete removes the entry even if storage's copy still had it");
+  win.S.entries = [store.entries[0]]; // stale cache missing e2
+  await win.mutate((d) => { d.days["2026-09-20"].push({ id: "e3", project: "ZuPOS", category: "Development", description: "three", accSec: 300 }); });
+  A(store.entries.map((e) => e.id).sort().join(",") === "e1,e2,e3",
+    "a stale window's add keeps the OTHER window's entry (e2) and still adds its own (e3)");
+  win.S.confirmBeforeDelete = false;
+  await win.deleteEntry("e3");
+  A(!store.entries.some((e) => e.id === "e3"), "a delete removes the entry from storage");
   A("e3" in store.deletedEntries, "the tombstone is persisted");
+  win.todayStr = realTodayStr;
 
   dom.window.close();
 }
@@ -1714,204 +1748,363 @@ async function harness12() {
 }
 
 // ============================================================
-// HARNESS 13 — Drive backup skips writing a new dated snapshot when nothing
-// changed since the last one (gdBackupNow / gdDoBackup).
+// Shared helpers for the sync v2 harnesses: a shared-storage mock (structured-clone semantics),
+// a Web Locks mock shared by one device's windows, and an in-memory Google Drive.
 // ============================================================
-function makeFakeDrive() {
+function makeSharedStorageMock(store) {
+  const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+  return {
+    get: async (k) => (k === null ? clone(store) : Object.fromEntries((Array.isArray(k) ? k : [k]).filter((x) => x in store).map((x) => [x, clone(store[x])]))),
+    set: async (obj) => { Object.assign(store, clone(obj)); },
+  };
+}
+function makeLocks() {
+  const chains = {};
+  return {
+    request: (name, fn) => {
+      const run = (chains[name] || Promise.resolve()).then(() => fn());
+      chains[name] = run.then(() => {}, () => {});
+      return run;
+    },
+  };
+}
+function makeDataContext(store, locks, htmlSrc) {
+  const dom = new JSDOM(htmlSrc || html, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = { identity: {}, runtime: {}, storage: { local: makeSharedStorageMock(store) } };
+  win.matchMedia = () => ({ matches: false });
+  if (locks) Object.defineProperty(win.navigator, "locks", { value: locks });
+  win.document.addEventListener = () => {}; // keep init()/route() out of it — see harness8
+  const scripts = htmlSrc ? [jsSrc, "gdrive.js", "tab.js"] : [jsSrc, "gdrive.js"];
+  for (const src of scripts) {
+    const el = win.document.createElement("script");
+    el.textContent = src === jsSrc ? jsSrc : fs.readFileSync(path.join(ROOT, src), "utf8");
+    win.document.body.appendChild(el);
+  }
+  // Stub AFTER the scripts evaluate — gdrive.js's own declarations would clobber earlier stubs.
+  win.gdToken = async () => "faketoken";
+  win.pushIngest = async () => {};
+  win.S = { entries: [], history: {}, timer: { activeId: null, startedAt: null }, submittedDays: {}, deletedEntries: {} };
+  win.viewDate = win.todayStr();
+  return win;
+}
+// In-memory Drive v3 covering exactly the calls sync-core.js makes. hooks.onDownload(file, who)
+// can block to interleave two devices; files carry parents so duplicate folders can be tested.
+function makeDrive(hooks) {
   let files = [];
-  let nextId = 1;
+  let n = 0;
+  const now = () => new Date(Date.now() + n).toISOString();
   const parseMultipart = (body) => {
     const chunks = body.split(/--ttb[0-9a-f]+/).map((c) => c.trim()).filter((c) => c && c !== "--");
     const meta = JSON.parse(chunks[0].slice(chunks[0].indexOf("{")));
     const content = chunks[1].slice(chunks[1].indexOf("{"), chunks[1].lastIndexOf("}") + 1);
     return { meta, content };
   };
-  const fetchMock = async (url, opts) => {
+  const ok = (body) => ({ ok: true, status: 200, text: async () => (typeof body === "string" ? body : JSON.stringify(body)), json: async () => body });
+  const fetchFor = (who) => async (url, opts) => {
     opts = opts || {};
     const u = new URL(url);
     if (u.pathname === "/drive/v3/files" && (!opts.method || opts.method === "GET")) {
-      const q = decodeURIComponent(u.searchParams.get("q") || "");
+      const q = u.searchParams.get("q") || "";
       const nameMatch = q.match(/name='([^']*)'/);
       const wantFolder = q.includes("mimeType='application/vnd.google-apps.folder'");
-      let list = files.filter((f) => !!f.isFolder === wantFolder && (!nameMatch || f.name === nameMatch[1]));
-      if (u.searchParams.get("orderBy") === "modifiedTime desc") list = [...list].sort((a, b) => b.modifiedTime - a.modifiedTime);
-      return { ok: true, status: 200, json: async () => ({ files: list.map((f) => ({ id: f.id, name: f.name, modifiedTime: new Date(f.modifiedTime).toISOString() })) }) };
+      const parents = [...q.matchAll(/'([^']+)' in parents/g)].map((m) => m[1]);
+      const list = files.filter((f) => !!f.isFolder === wantFolder && !f.trashed &&
+        (!nameMatch || f.name === nameMatch[1]) && (!parents.length || parents.includes(f.parent)));
+      return ok({ files: list.map((f) => ({ id: f.id, name: f.name, modifiedTime: f.modifiedTime, createdTime: f.createdTime })) });
     }
     if (u.pathname === "/drive/v3/files" && opts.method === "POST") {
       const body = JSON.parse(opts.body);
-      const f = { id: "f" + nextId++, name: body.name, isFolder: true, modifiedTime: Date.now() };
+      const f = { id: "fo" + ++n, name: body.name, isFolder: true, createdTime: now(), modifiedTime: now() };
       files.push(f);
-      return { ok: true, status: 200, json: async () => ({ id: f.id }) };
+      return ok({ id: f.id });
     }
     if (u.pathname === "/upload/drive/v3/files" && opts.method === "POST") {
       const { meta, content } = parseMultipart(opts.body);
-      const f = { id: "f" + nextId++, name: meta.name, content, modifiedTime: Date.now() };
+      const f = { id: "f" + ++n, name: meta.name, parent: meta.parents[0], content, createdTime: now(), modifiedTime: now() };
       files.push(f);
-      return { ok: true, status: 200, json: async () => ({ id: f.id, name: f.name }) };
+      return ok({ id: f.id, name: f.name });
     }
     const upd = u.pathname.match(/^\/upload\/drive\/v3\/files\/(.+)$/);
     if (upd && opts.method === "PATCH") {
       const f = files.find((x) => x.id === upd[1]);
-      if (f) { f.content = opts.body; f.modifiedTime = Date.now(); }
-      return { ok: true, status: 200, json: async () => (f ? { id: f.id, name: f.name } : {}) };
+      f.content = opts.body; f.modifiedTime = now(); n++;
+      return ok({ id: f.id, name: f.name });
     }
     const dl = u.pathname.match(/^\/drive\/v3\/files\/(.+)$/);
     if (dl && u.searchParams.get("alt") === "media") {
       const f = files.find((x) => x.id === dl[1]);
-      return { ok: true, status: 200, text: async () => (f ? f.content : "") };
+      const text = f ? f.content : "";
+      if (hooks && hooks.onDownload) await hooks.onDownload(f, who);
+      return ok(text);
     }
     return { ok: false, status: 404, text: async () => "not found" };
   };
-  return { fetchMock, dated: () => files.filter((f) => !f.isFolder && f.name !== "timesheet-latest.json") };
-}
-async function harness13() {
-  console.log("\n== Harness 13: skip redundant Drive backups ==");
-  const store = {};
-  const chromeMock = {
-    storage: { local: {
-      get: async (k) => (k === null ? { ...store } : Object.fromEntries((Array.isArray(k) ? k : [k]).map((x) => [x, store[x]]))),
-      set: async (obj) => { Object.assign(store, obj); },
-    } },
-  };
-  const gdSrc = fs.readFileSync(path.join(ROOT, "gdrive.js"), "utf8");
-  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
-  const win = dom.window;
-  win.chrome = chromeMock;
-  win.crypto = { randomUUID: () => "id-h13" };
-  win.document.addEventListener = () => {}; // keep init()/route() out of it — see harness8
-  const s1 = win.document.createElement("script");
-  s1.textContent = jsSrc; // popup.js — provides S / buildExportText
-  win.document.body.appendChild(s1);
-  const s2 = win.document.createElement("script");
-  s2.textContent = gdSrc;
-  win.document.body.appendChild(s2);
-
-  const drive = makeFakeDrive();
-  win.fetch = drive.fetchMock;
-  win.gdToken = async () => "faketoken";
-
-  win.S.name = "Debjit Paul";
-  win.S.date = "2026-09-20";
-  win.S.entries = [{ id: "e1", project: "ZuPOS", category: "Development", description: "one", accSec: 3600 }];
-  win.S.history = {};
-  win.S.submittedDays = {};
-  win.S.deletedEntries = {};
-  win.S.timer = { activeId: null, startedAt: null };
-
-  const wrote1 = await win.gdBackupNow(true);
-  A(wrote1 === true, "first backup with real data is written");
-  A(drive.dated().length === 1, "one dated snapshot exists after the first backup");
-
-  const wrote2 = await win.gdBackupNow(true);
-  A(wrote2 === false, "calling backup again with nothing changed is skipped, not written");
-  A(drive.dated().length === 1, "no new dated snapshot file was added when nothing changed");
-
-  // A real change (a new entry) must still be backed up, not skipped.
-  // (Same-minute reruns overwrite that minute's dated file rather than
-  // multiplying it — see gdBackupNow's own comment — so assert on content,
-  // not file count, to stay accurate however fast the test happens to run.)
-  win.S.entries.push({ id: "e2", project: "ZuPOS", category: "Development", description: "two", accSec: 60 });
-  const wrote3 = await win.gdBackupNow(true);
-  A(wrote3 === true, "a genuine change after a skip is backed up normally");
-  const latestDated = drive.dated().sort((a, b) => b.modifiedTime - a.modifiedTime)[0];
-  A(JSON.parse(latestDated.content).days["2026-09-20"].some((e) => e.id === "e2"), "the new dated snapshot reflects the real change (e2)");
-
-  dom.window.close();
-}
-
-// ============================================================
-// HARNESS 14 — a manual edit reverting a few seconds later (Drive sync using
-// a stale second context's own outdated snapshot as "local").
-// ============================================================
-// Real bug report: user manually edits an entry's time; a bit later it's
-// back to 00:00. Root cause, confirmed by reproducing it against the
-// unpatched code before this fix: gdSync() built its "local" side from
-// buildExportText(), which reads THIS CONTEXT's in-memory S — not fresh
-// storage. A second open window (tab.html left open while the popup made an
-// edit) has a stale S; when ITS OWN gdSync() runs (e.g. gdSyncSoon()'s
-// 2.5s-debounced trigger off the OTHER window's storage write), the merge's
-// documented "local wins on an id collision" tie-break picks the stale
-// window's OLD value over Drive's fresher one — and because the day's
-// overall signature still differs from the stale window's own (it's missing
-// entries the other window added), gdSync's "pulled" branch fires and
-// applyBackupData() writes that reverted value straight back into the
-// SHARED storage. refreshLocalStateFromStorage() fixes this by re-reading
-// storage before building the local snapshot, so "local" is never stale.
-function makeSharedStorageMock(store) {
-  // Deep-clones on every get(), matching real chrome.storage.local (which
-  // structured-clones across contexts) — a shallow `{...store}` would let
-  // two "separate" contexts accidentally share live object references and
-  // mask exactly this bug (mutating one context's entry would silently
-  // "fix" the other's stale copy too, which never happens for real).
-  const clone = (v) => (v === undefined ? null : JSON.parse(JSON.stringify(v)));
   return {
-    get: async (k) => (k === null ? clone(store) : Object.fromEntries((Array.isArray(k) ? k : [k]).map((x) => [x, clone(store[x])]))),
-    set: async (obj) => { Object.assign(store, obj); },
+    fetchFor,
+    files: () => files,
+    byName: (name) => files.find((f) => f.name === name),
+    put: (f) => files.push({ createdTime: now(), modifiedTime: now(), ...f }),
+    json: (name) => JSON.parse(files.find((f) => f.name === name).content),
   };
 }
-function makeSyncContext(store, drive) {
-  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
-  const win = dom.window;
-  win.chrome = { identity: {}, storage: { local: makeSharedStorageMock(store) } };
-  win.matchMedia = () => ({ matches: false });
-  win.fetch = drive.fetchMock;
-  win.document.addEventListener = () => {}; // keep init()/route() out of it — see harness8
-  const s1 = win.document.createElement("script");
-  s1.textContent = jsSrc; // popup.js
-  win.document.body.appendChild(s1);
-  const s2 = win.document.createElement("script");
-  s2.textContent = fs.readFileSync(path.join(ROOT, "gdrive.js"), "utf8");
-  win.document.body.appendChild(s2);
-  // Stub AFTER both scripts evaluate — gdrive.js's own `function gdToken(){}`
-  // declaration would otherwise clobber an earlier stub.
-  win.gdToken = async () => "faketoken";
-  return win;
+// One "device" = one storage + one window with popup.js + gdrive.js, talking to the shared Drive.
+function makeDevice(drive, name, entries) {
+  const store = { name: "Tester", date: undefined, entries: [], history: {}, submittedDays: {}, deletedEntries: {}, timer: { activeId: null, startedAt: null } };
+  const w = makeDataContext(store, makeLocks());
+  store.date = w.todayStr();
+  store.entries = (entries || []).map((e) => ({ project: "P", category: "C", accSec: 60, ...e }));
+  w.fetch = drive.fetchFor(name);
+  return { store, w, name, today: store.date, ids: () => store.entries.map((e) => e.id).sort().join(",") };
 }
+
+// ============================================================
+// HARNESS 13 — dated backups: skipped when nothing changed, never empty
+// ============================================================
+async function harness13() {
+  console.log("\n== Harness 13: dated Drive backups ==");
+  const drive = makeDrive();
+  const dev = makeDevice(drive, "A", [{ id: "e1", description: "one", accSec: 3600 }]);
+  const dated = () => drive.files().filter((f) => /^timesheet-\d/.test(f.name));
+  A((await dev.w.gdBackupNow(true)) === true && dated().length === 1, "first backup with real data writes one dated snapshot");
+  A((await dev.w.gdBackupNow(true)) === false && dated().length === 1, "backing up again with nothing changed is skipped");
+  await dev.w.mutate((d) => { dev.w.TTData.list(d, d.date).push({ id: "e2", description: "two" }); });
+  A((await dev.w.gdBackupNow(true)) === true, "a real change after a skip is backed up");
+  const latest = dated().sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime))[0];
+  A(JSON.parse(latest.content).days[dev.today].some((e) => e.id === "e2"), "the newest snapshot holds the change");
+  A(/-[0-9a-f-]{6}\.json$/.test(latest.name), "snapshot names carry a device suffix, so two devices never collide on a name");
+  const empty = makeDevice(makeDrive(), "E", []);
+  let threw = false;
+  try { await empty.w.gdBackupNow(true); } catch (e) { threw = true; }
+  A(threw, "an empty device never writes an empty snapshot");
+  dev.w.close(); empty.w.close();
+}
+
+// ============================================================
+// HARNESS 14 — issue #2 end to end: several devices, one Drive, adversarial timing.
+// Each case failed on the pre-v2 code (reproduced before the fix).
+// ============================================================
 async function harness14() {
-  console.log("\n== Harness 14: manual edit survives a stale second window's Drive sync ==");
-  const store = {};
-  const drive = makeFakeDrive();
-  store.name = "Debjit Paul";
-  store.date = "2026-09-15";
-  store.entries = [{ id: "e1", project: "ZuPOS", category: "Development", description: "task", accSec: 0 }];
-  store.history = {};
-  store.submittedDays = {};
-  store.deletedEntries = {};
-  store.timer = { activeId: null, startedAt: null };
-
-  // ctxA = the popup, freshly opened. ctxB = tab.html, opened at the same moment.
-  const ctxA = makeSyncContext(store, drive);
-  ctxA.S = await ctxA.chrome.storage.local.get(null);
-  ctxA.viewDate = ctxA.S.date;
-  const ctxB = makeSyncContext(store, drive);
-  ctxB.S = await ctxB.chrome.storage.local.get(null);
-  ctxB.viewDate = ctxB.S.date;
-
-  // ctxB's own init() already synced once (writes today's day to Drive).
-  await ctxB.gdSync(false);
-
-  // The user edits e1's time in ctxA, and separately adds a new entry (so
-  // the day's overall signature genuinely differs from ctxB's stale view too
-  // — an edit-only change wouldn't even trigger ctxB's "pulled" branch).
-  ctxA.editTime("e1", "02:15");
-  ctxA.S.entries.push({ id: "e2", project: "VSB", category: "Development", description: "second task", accSec: 300 });
-  await ctxA.persistCurrent();
-  await ctxA.gdSync(false); // ctxA's own sync pushes both changes to Drive
-
-  A(store.entries.find((e) => e.id === "e1").accSec === 8100, "sanity: the edit is in shared storage before ctxB ever syncs");
-
-  // ~2.5s later, ctxB's OWN gdSyncSoon() fires gdSync(false) — ctxB never
-  // reloaded, so without the fix this uses ctxB's stale pre-edit view as "local".
-  await ctxB.gdSync(false);
-
-  const e1After = store.entries.find((e) => e.id === "e1");
-  A(e1After.accSec === 8100, "the manual edit survives a stale second window's background Drive sync");
-  A(store.entries.some((e) => e.id === "e2"), "the other window's new entry is still present too");
-
-  ctxA.close();
-  ctxB.close();
+  console.log("\n== Harness 14: multi-device sync (issue #2) ==");
+  // 1. An entry added while this device's own sync is waiting on the network survives, and reaches Drive.
+  {
+    const drive = makeDrive();
+    const b = makeDevice(drive, "B", [{ id: "fromB" }]);
+    await b.w.gdSync(false);
+    const a = makeDevice(drive, "A", [{ id: "a1" }]);
+    const aw2 = makeDataContext(a.store, null); // a second window on device A
+    let added = false;
+    const base = drive.fetchFor("A");
+    a.w.fetch = async (url, opts) => {
+      const r = await base(url, opts);
+      if (!added && url.includes("alt=media")) {
+        added = true;
+        await aw2.mutate((d) => { aw2.TTData.list(d, d.date).push({ id: "addedDuringSync", description: "typed mid-sync" }); });
+      }
+      return r;
+    };
+    await a.w.gdSync(false);
+    A(a.store.entries.some((e) => e.id === "addedDuringSync"), "an entry added while a sync is in flight is still there afterwards");
+    await a.w.gdSync(false);
+    const devFile = drive.files().find((f) => f.name.startsWith("device-") && JSON.parse(f.content).deviceId === a.store.deviceId);
+    A(devFile && JSON.parse(devFile.content).days[a.today].some((e) => e.id === "addedDuringSync"), "...and it reaches Drive on the next sync");
+    A(a.store.entries.some((e) => e.id === "fromB"), "the other device's entry is merged in too");
+    aw2.close(); a.w.close(); b.w.close();
+  }
+  // 2. Two devices syncing at the same instant: nobody's data is lost on Drive.
+  {
+    const drive = makeDrive();
+    const seed = makeDevice(drive, "S", [{ id: "seed" }]);
+    await seed.w.gdSync(false);
+    let release; const gate = new Promise((r) => (release = r)); let waiting = 0;
+    drive.fetchFor = ((orig) => orig)(drive.fetchFor);
+    const a = makeDevice(drive, "A", [{ id: "onlyA" }]);
+    const b = makeDevice(drive, "B", [{ id: "onlyB" }]);
+    const hold = (dev) => { const f = dev.w.fetch; dev.w.fetch = async (u, o) => { const r = await f(u, o); if (u.includes("alt=media") && waiting < 2) { if (++waiting === 2) release(); await gate; } return r; }; };
+    hold(a); hold(b);
+    await Promise.all([a.w.gdSync(false), b.w.gdSync(false)]);
+    const c = makeDevice(drive, "C", []);
+    await c.w.gdSync(false);
+    A(c.ids() === "onlyA,onlyB,seed", "a fresh device sees both devices' entries after they synced at the same instant (" + c.ids() + ")");
+    await a.w.gdSync(false); await b.w.gdSync(false);
+    A(a.ids() === "onlyA,onlyB,seed" && b.ids() === a.ids(), "both racing devices converge to the same data");
+    seed.w.close(); a.w.close(); b.w.close(); c.w.close();
+  }
+  // 3. A newer edit on one device wins over another device's stale copy, and everyone converges.
+  {
+    const drive = makeDrive();
+    const a = makeDevice(drive, "A", [{ id: "t1", description: "old text" }]);
+    await a.w.gdSync(false);
+    const b = makeDevice(drive, "B", []);
+    await b.w.gdSync(false);
+    A(b.store.entries[0].description === "old text", "sanity: device B pulled the entry");
+    await a.w.mutate((d) => { const e = a.w.TTData.find(d, d.date, "t1"); e.description = "new text"; a.w.TTCore.touch(d, e); });
+    await a.w.gdSync(false);
+    await b.w.gdSync(false); // B syncs with its now-stale copy
+    await a.w.gdSync(false);
+    A(a.store.entries[0].description === "new text" && b.store.entries[0].description === "new text", "the newer edit wins on both devices (no revert, no divergence)");
+    a.w.close(); b.w.close();
+  }
+  // 4. Delete → restore via the picker brings the task back everywhere, and it stays back.
+  {
+    const drive = makeDrive();
+    const a = makeDevice(drive, "A", [{ id: "keep" }, { id: "lost", description: "deleted by mistake" }]);
+    await a.w.gdSync(false);
+    const b = makeDevice(drive, "B", []);
+    await b.w.gdSync(false);
+    const backup = JSON.parse(drive.byName(drive.files().find((f) => f.name.startsWith("device-")).name).content);
+    a.w.S.confirmBeforeDelete = false; a.w.viewDate = a.today;
+    await a.w.deleteEntry("lost");
+    await a.w.gdSync(false); await b.w.gdSync(false);
+    A(!b.store.entries.some((e) => e.id === "lost"), "sanity: the delete reached device B");
+    const cands = a.w.TTCore.restoreCandidates(a.w.TTCore.stateOf(a.w.TTData.toDoc(a.store)), backup);
+    A(cands.length === 1 && cands[0].entry.id === "lost", "the restore picker offers exactly the deleted task");
+    await a.w.mutate((d) => { a.w.TTCore.applyRestore(d, d.days, cands); });
+    await a.w.gdSync(false); await b.w.gdSync(false); await a.w.gdSync(false);
+    A(a.store.entries.some((e) => e.id === "lost") && b.store.entries.some((e) => e.id === "lost"), "the restored task is back on both devices after syncing (the tombstone no longer wins)");
+    a.w.close(); b.w.close();
+  }
+  // 5. Reset on one device propagates as deletes, and a recovery point can bring things back.
+  {
+    const drive = makeDrive();
+    const a = makeDevice(drive, "A", [{ id: "r1" }, { id: "r2" }]);
+    await a.w.gdSync(false);
+    const b = makeDevice(drive, "B", []);
+    await b.w.gdSync(false);
+    await a.w.mutate((d) => { for (const l of Object.values(d.days)) for (const e of l) a.w.TTCore.tombstone(d, e.id); d.days = {}; });
+    await a.w.gdSync(false); await b.w.gdSync(false);
+    A(b.store.entries.length === 0, "a reset on one device removes the tasks on the other device too");
+    const rp = b.store.recoveryPoints && b.store.recoveryPoints[b.store.recoveryPoints.length - 1];
+    A(rp && a.w.TTCore.counts(rp.env).entries === 2, "the device that lost tasks to a sync kept a recovery point first");
+    const log = b.store.ttLog || [];
+    A(log.filter((e) => e.type === "removed").length === 2 && log.some((e) => e.type === "removed" && /deleted on Chrome extension/.test(e.reason)),
+      "the activity log records each removed task and which device deleted it");
+    a.w.close(); b.w.close();
+  }
+  // 6. A corrupt file on Drive is skipped and logged, never treated as "empty".
+  {
+    const drive = makeDrive();
+    const a = makeDevice(drive, "A", [{ id: "k" }]);
+    await a.w.gdSync(false);
+    const folder = drive.files().find((f) => f.isFolder).id;
+    drive.put({ id: "bad1", name: "device-broken.json", parent: folder, content: "{ not json" });
+    await a.w.gdSync(false);
+    A(a.store.entries.some((e) => e.id === "k"), "a corrupt device file does not remove anything");
+    A((a.store.ttLog || []).some((e) => e.type === "sync-bad-file" && e.file === "device-broken.json"), "the corrupt file is named in the activity log");
+    a.w.close();
+  }
+  // 7. Two "Team Timesheet Backups" folders (two devices connected at once): data from both is read.
+  {
+    const drive = makeDrive();
+    const env = (id) => JSON.stringify({ app: "team-timesheet", v: 2, deviceId: id, days: { "2026-01-05": [{ id: "in-" + id, updatedAt: 5, updatedBy: id }] } });
+    drive.put({ id: "F1", name: "Team Timesheet Backups", isFolder: true });
+    drive.put({ id: "F2", name: "Team Timesheet Backups", isFolder: true });
+    drive.put({ id: "d1", name: "device-x.json", parent: "F1", content: env("x") });
+    drive.put({ id: "d2", name: "device-y.json", parent: "F2", content: env("y") });
+    const a = makeDevice(drive, "A", []);
+    await a.w.gdSync(false);
+    const hist = a.store.history["2026-01-05"] || [];
+    A(hist.some((e) => e.id === "in-x") && hist.some((e) => e.id === "in-y"), "entries in both duplicate folders are merged");
+    a.w.close();
+  }
+  // 8. Old-version client: its latest.json is read (nothing it adds is lost), and it is flagged.
+  {
+    const drive = makeDrive();
+    const a = makeDevice(drive, "A", [{ id: "v2task" }]);
+    await a.w.gdSync(false);
+    const mirror = drive.json("timesheet-latest.json");
+    A(mirror.days[a.today].some((e) => e.id === "v2task"), "the compatibility timesheet-latest.json is kept up to date for old clients");
+    const f = drive.byName("timesheet-latest.json");
+    const old = { app: "team-timesheet", v: 1, exportedAt: Date.now() + 5000, days: { ...mirror.days, [a.today]: [...mirror.days[a.today], { id: "fromOldClient", description: "old app" }] } };
+    f.content = JSON.stringify(old);
+    await a.w.gdSync(false);
+    A(a.store.entries.some((e) => e.id === "fromOldClient"), "an entry written by an old-version client is merged in");
+    A(!!a.store.gdLegacyClientAt, "an old-version client writing to Drive is detected (Settings warns to update it)");
+    a.w.close();
+  }
+  // 8b. The mirror already matches on this device's first v2 sync (nothing to write) — an old
+  //     client writing afterwards must still be detected.
+  {
+    const drive = makeDrive();
+    const a = makeDevice(drive, "A", [{ id: "same" }]);
+    const legacy = { app: "team-timesheet", v: 1, exportedAt: Date.now() - 60000, days: { [a.today]: [{ id: "same", project: "P", category: "C", description: "", accSec: 60 }] } };
+    drive.put({ id: "F0", name: "Team Timesheet Backups", isFolder: true });
+    drive.put({ id: "L0", name: "timesheet-latest.json", parent: "F0", content: JSON.stringify(legacy) });
+    await a.w.gdSync(false);
+    A(!a.store.gdLegacyClientAt, "a pre-existing old-format mirror is not itself flagged");
+    const f = drive.byName("timesheet-latest.json");
+    f.content = JSON.stringify({ ...legacy, exportedAt: Date.now() + 5000, days: { [a.today]: [...legacy.days[a.today], { id: "oldAppAdd" }] } });
+    await a.w.gdSync(false);
+    A(!!a.store.gdLegacyClientAt && a.store.entries.some((e) => e.id === "oldAppAdd"), "a later write by an old client is flagged and its entry merged");
+    a.w.close();
+  }
+  // 9. Concurrent timers on the same task (decision: last fold wins, conflict is logged).
+  {
+    const drive = makeDrive();
+    const a = makeDevice(drive, "A", [{ id: "run", accSec: 0 }]);
+    await a.w.gdSync(false);
+    const b = makeDevice(drive, "B", []);
+    await b.w.gdSync(false);
+    await a.w.mutate((d) => { d.timer = { activeId: "run", startedAt: Date.now() - 60000 }; });
+    await b.w.mutate((d) => { const e = b.w.TTData.find(d, d.date, "run"); e.accSec = 600; b.w.TTCore.touch(d, e); });
+    await b.w.gdSync(false); await a.w.gdSync(false);
+    A((a.store.ttLog || []).some((e) => e.type === "timer-conflict"), "a remote change to a task whose timer runs here is logged as a conflict");
+    A(a.store.timer.activeId === "run", "the local timer keeps running on the updated task");
+    a.w.close(); b.w.close();
+  }
 }
 
+// ============================================================
+// HARNESS 15 — full-view restore picker (✓ / ✗ per task) + recovery list + activity log
+// ============================================================
+async function harness15() {
+  console.log("\n== Harness 15: restore picker UI ==");
+  const tabHtml = fs.readFileSync(path.join(ROOT, "tab.html"), "utf8");
+  const store = { name: "Tester", entries: [], history: {}, submittedDays: {}, deletedEntries: {}, timer: { activeId: null, startedAt: null } };
+  const w = makeDataContext(store, makeLocks(), tabHtml);
+  store.date = w.todayStr();
+  store.entries = [{ id: "here", project: "P", category: "C", description: "already here", accSec: 60 }];
+  w.S = await w.chrome.storage.local.get(null);
+  const backup = { app: "team-timesheet", v: 1, days: { [store.date]: [
+    { id: "here", project: "P", category: "C", description: "already here", accSec: 60 },
+    { id: "m1", project: "ZuPOS", category: "Development", description: "missing one", accSec: 3600 },
+    { id: "m2", project: "VSB", category: "Meeting (General)", description: "missing two", accSec: 1800 },
+  ] } };
+  const $ = (id) => w.document.getElementById(id);
+  const pending = w.openRestorePicker(backup, "test backup");
+  await sleep(10);
+  const rows = [...w.document.querySelectorAll("#restoreList .rRow")];
+  A(!$("restoreOverlay").classList.contains("hidden") && rows.length === 2, "the picker lists only the two missing tasks");
+  A(rows[0].querySelector(".rTime").textContent === "01:00" && rows[0].textContent.includes("missing one"), "each row shows the task and its time");
+  rows[0].querySelector(".rYes").click();
+  w.document.querySelectorAll("#restoreList .rRow")[1].querySelector(".rNo").click();
+  A($("restoreApply").textContent === "Add 1 task(s)", "the apply button counts only ✓ tasks");
+  await w.applyRestorePick(); // DOMContentLoaded wiring is neutered in these harnesses
+  const res = await pending;
+  A(res.added === 1 && store.entries.some((e) => e.id === "m1") && !store.entries.some((e) => e.id === "m2"), "✓ adds the task, ✗ leaves it out");
+  A(store.entries.some((e) => e.id === "here"), "nothing already present is removed or replaced");
+  A((store.recoveryPoints || []).length === 1, "a recovery point is saved before the restore");
+  const again = w.openRestorePicker(backup, "test backup");
+  await sleep(5);
+  A(w.document.querySelectorAll("#restoreList .rRow").length === 1, "reopening offers only what's still missing (m2)");
+  w.closeRestorePicker({ cancelled: true });
+  await again;
+  const cancelled = w.openRestorePicker({ days: { [store.date]: [{ id: "zz", description: "x" }] } }, "x");
+  await sleep(5);
+  w.closeRestorePicker({ cancelled: true });
+  A((await cancelled).cancelled && !store.entries.some((e) => e.id === "zz"), "Cancel adds nothing");
+  w.S = await w.chrome.storage.local.get(null);
+  w.renderActivityLog();
+  A($("activityLog").textContent.includes("restore") && $("activityLog").textContent.includes("missing one"), "the activity log shows the restore and the task it added");
+  w.renderRecovery();
+  A(w.document.querySelectorAll("#recoveryList .gdFile").length === 1, "the recovery point is listed in Settings");
+  w.close();
+}
+
+//! A harness awaiting a promise that never settles lets Node exit early with code 0 and no summary
+//! line — that must read as a failure, not a pass.
+let finished = false;
+process.on("exit", () => { if (!finished) { console.error("\nSMOKE: DID NOT FINISH (a harness hung)"); process.exitCode = 1; } });
 (async () => {
   await harness1();
   await harness2();
@@ -1927,6 +2120,8 @@ async function harness14() {
   await harness12();
   await harness13();
   await harness14();
+  await harness15();
+  finished = true;
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();

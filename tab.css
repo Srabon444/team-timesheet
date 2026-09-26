@@ -174,3 +174,18 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .weekChart .bar { width: 100%; max-width: 28px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
 .weekChart .col.today .bar { background: var(--success); }
 .weekChart .dow { font-size: 12px; color: var(--text-muted); }
+
+/* Restore picker */
+.restoreBox { max-width: 640px; }
+.restoreBulk { display: flex; gap: 8px; margin: 8px 0; }
+.restoreList { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.rDate { font-weight: 600; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+.rRow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); }
+.rRow.yes { border-color: var(--success); }
+.rRow.no { opacity: .5; }
+.rMain { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rDesc { display: block; color: var(--text-muted); font-size: 12px; }
+.rRow button { width: 32px; height: 28px; padding: 0; border-radius: 6px; border: 1px solid var(--border-color); background: transparent; color: inherit; cursor: pointer; }
+.rRow.yes .rYes { background: var(--success); color: #fff; }
+.rRow.no .rNo { background: var(--danger); color: #fff; }
+.logBox { max-height: 240px; overflow: auto; white-space: pre-wrap; font-size: 11px; margin: 8px 0; }

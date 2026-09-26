@@ -124,23 +124,6 @@ function isTodayView() {
 function currentEntries() {
   return isTodayView() ? S.entries : (S.history[viewDate] || []);
 }
-async function persistCurrent() {
-  if (isTodayView()) await writeTodayEntries(); // merge-safe — see writeTodayEntries()
-  else await patchHistoryDay(viewDate, S.history[viewDate] || []);
-}
-// Merge-write a single history day against whatever is CURRENTLY in storage,
-// instead of blindly replacing the whole `history` object. tab.html runs a
-// second, independent copy of this script that never re-syncs its in-memory
-// S after the initial load — if that copy is left open across a day
-// rollover and later writes `history` from its now-stale S, a full replace
-// would silently erase the day another context (e.g. the popup) just
-// archived. Re-reading storage right before writing keeps every OTHER day
-// intact no matter how stale this context's own S.history is.
-async function patchHistoryDay(date, list) {
-  const stored = (await chrome.storage.local.get(null)).history; // get(null) — matches every other read in this file
-  S.history = { ...(stored || {}), [date]: list };
-  await chrome.storage.local.set({ history: S.history });
-}
 function secToHHMM(sec) {
   let m = Math.round(sec / 60);
   const h = Math.floor(m / 60);
@@ -218,61 +201,31 @@ function applyTheme(theme) {
 }
 
 // ---------- storage / state ----------
-// Merge-write S.entries against whatever's CURRENTLY in storage, same
-// reasoning as patchHistoryDay: a second open window (popup + tab.html, or
-// two tab.html windows) holds its own stale copy of S.entries, and a blind
-// replace here would silently erase whatever the other window added/edited
-// since this window last synced. Union by id (this window wins on a genuine
-// id collision — same tie-break gdMergeDays already uses for cross-device
-// sync) and drop anything either side tombstoned.
-async function writeTodayEntries() {
-  const stored = await chrome.storage.local.get(["entries", "deletedEntries"]);
-  S.deletedEntries = { ...(stored.deletedEntries || {}), ...(S.deletedEntries || {}) };
-  const byId = new Map();
-  for (const e of stored.entries || []) byId.set(e.id, e);
-  for (const e of S.entries) byId.set(e.id, e);
-  S.entries = [...byId.values()].filter((e) => !(e.id in S.deletedEntries));
-  await chrome.storage.local.set({ entries: S.entries, timer: S.timer, deletedEntries: S.deletedEntries });
+//* S is a read-only cache of chrome.storage.local for rendering. Every change to tracked data goes
+//* through mutate() (TTData.withData: cross-window lock + fresh read + one write), never through S,
+//* so a window's stale copy can never overwrite what another window or a sync just wrote.
+function adopt(written) {
+  for (const [k, v] of Object.entries(written || {})) S[k] = v;
+  S.entries = S.entries || [];
+  S.history = S.history || {};
+  S.timer = S.timer || { activeId: null, startedAt: null };
+  S.submittedDays = S.submittedDays || {};
+  S.deletedEntries = S.deletedEntries || {};
 }
-async function persist() {
-  await writeTodayEntries();
+async function mutate(fn) {
+  const { result, written } = await TTData.withData(fn);
+  adopt(written);
+  return result;
 }
-// Roll S over to today if the wall clock has moved past S.date. Checked at
-// init() and again on a timer/visibility change (see init()) so a context
-// left open across midnight can't keep silently writing under the old date.
+// TTData rolls storage over to today on any write; this only makes an idle window notice.
+// Returns true if the day changed.
 async function rollDayIfNeeded() {
   const today = todayStr();
-  if (S.date === today) return false;
-  // Another open context may already have rolled over — and even added
-  // entries under `today` — before this one noticed. Re-read storage rather
-  // than trusting this context's possibly-stale S.history.
-  const stored = await chrome.storage.local.get(null);
-  S.history = stored.history || S.history || {};
-  // Archive the outgoing day's entries before clearing them — skip on the
-  // very first run ever (no S.date yet) so we don't write a bogus entry.
-  if (S.date && S.entries && S.entries.length) {
-    foldActive(); // fold any running timer into accSec before archiving
-    await patchHistoryDay(S.date, S.entries); // merge — never blind-replace history
-  }
-  if (stored.date === today) {
-    // The other context already brought `today` live (and maybe added to
-    // it) — adopt its state instead of resetting to empty and losing it.
-    S.entries = stored.entries || [];
-    S.timer = stored.timer || { activeId: null, startedAt: null };
-  } else {
-    //! "Copy to" a future date stashes it under S.history[thatDate] (the only
-    //! way a future date gets entries — see confirmCopyTo; day-nav itself
-    //! caps at S.date). When that date arrives it must become the live
-    //! S.entries, not get reset to empty and left orphaned in history.
-    const arrived = S.history[today];
-    S.entries = (arrived && arrived.length) ? arrived : [];
-    if (arrived && arrived.length) delete S.history[today];
-    S.timer = { activeId: null, startedAt: null };
-  }
-  S.date = today;
-  S.draft = null;
-  await chrome.storage.local.set({ history: S.history, entries: S.entries, timer: S.timer, draft: null, date: today });
-  return true;
+  const stored = (await chrome.storage.local.get("date")).date;
+  if (S.date === today && stored === today) return false;
+  const before = S.date;
+  await mutate(() => {});
+  return before !== S.date;
 }
 // Background trigger (timer/visibilitychange) for rollDayIfNeeded() — those
 // fire outside any click handler that would otherwise call render() itself,
@@ -292,11 +245,7 @@ async function checkDayRollover() {
 }
 async function init() {
   S = await chrome.storage.local.get(null);
-  S.entries = S.entries || [];
-  S.timer = S.timer || { activeId: null, startedAt: null };
-  S.history = S.history || {};
-  S.submittedDays = S.submittedDays || {}; // { date: { at, method } } — Task 7
-  S.deletedEntries = S.deletedEntries || {}; // { entryId: deletedAtMs } — tombstones so sync merge doesn't resurrect a deleted entry
+  adopt();
   S.confirmBeforeDelete = S.confirmBeforeDelete === undefined ? true : S.confirmBeforeDelete;
   const dailyLimitWasUnset = S.dailyLimitHours === undefined;
   S.dailyLimitHours = S.dailyLimitHours || 8;
@@ -305,23 +254,19 @@ async function init() {
   if (dailyLimitWasUnset) await chrome.storage.local.set({ dailyLimitHours: S.dailyLimitHours });
   S.warnedDate = S.warnedDate === undefined ? null : S.warnedDate;
   S.theme = S.theme || "dark";
-  await rollDayIfNeeded();
+  //* First run on this device, or a day boundary crossed while closed: the data layer settles both.
+  if (!S.deviceId || S.date !== todayStr()) await mutate(() => {});
   document.documentElement.dataset.theme = resolveTheme(S.theme);
   route();
-  // Cross-device sync: silently sync with Google Drive on open (if connected).
-  // A real conflict (both sides changed) resolves automatically to whichever
-  // side was edited more recently — see gdSync.
+  // Cross-device sync: silently merge with Google Drive on open (if connected).
   if (typeof gdSync === "function") gdSync(false).catch(() => {});
   //* Refreshes the cached month when it rolls over; a no-op the rest of the time.
   if (typeof prayerEnsureMonth === "function") prayerEnsureMonth().then(renderPrayerRow).catch(() => {});
   //! The row shows a countdown, so it goes stale in tab.html, which stays open all day.
   setInterval(renderPrayerRow, 60000);
   //! A window (esp. tab.html, left open for hours) never otherwise notices the
-  //! wall clock crossing into a new day on its own — nothing short of this was
-  //! re-checking todayStr(), so "today" silently stayed yesterday until the
-  //! user closed and reopened. The interval is the fallback; visibilitychange
-  //! catches it the instant the user looks back at the tab, well before they
-  //! can act (so a stale window is virtually always fixed before its next add).
+  //! wall clock crossing into a new day on its own. The interval is the fallback;
+  //! visibilitychange catches it the instant the user looks back at the tab.
   setInterval(checkDayRollover, 60000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) checkDayRollover(); });
   // Keep Names/Project/Category in sync with the live form on every open
@@ -336,30 +281,32 @@ function elapsedSec(e) {
   if (S.timer.activeId === e.id && S.timer.startedAt) s += (Date.now() - S.timer.startedAt) / 1000;
   return s;
 }
-function foldActive() {
-  if (S.timer.activeId && S.timer.startedAt) {
-    const e = S.entries.find((x) => x.id === S.timer.activeId);
-    if (e) e.accSec = (e.accSec || 0) + (Date.now() - S.timer.startedAt) / 1000;
-  }
-  S.timer = { activeId: null, startedAt: null };
-}
 async function startTimer(id) {
-  foldActive();                 // stops any other running timer
-  S.timer = { activeId: id, startedAt: Date.now() };
-  await persist();
+  await mutate((d) => {
+    TTData.foldTimer(d); // stops any other running timer
+    d.timer = { activeId: id, startedAt: Date.now() };
+  });
   render();
 }
 async function pauseTimer() {
-  foldActive();
-  await persist();
+  await mutate((d) => {
+    const e = d.timer.activeId && TTData.find(d, d.date, d.timer.activeId);
+    TTData.foldTimer(d);
+    if (e) TTData.log(d, [{ type: "timer-stop", id: e.id, date: d.date, entry: TTCore.short(e) }]);
+  });
   render();
 }
-function editTime(id, str) {
-  const e = currentEntries().find((x) => x.id === id);
-  if (!e) return;
-  e.accSec = hhmmToSec(str);
-  if (isTodayView() && S.timer.activeId === id) S.timer.startedAt = Date.now(); // rebase running timer
-  persistCurrent();
+async function editTime(id, str) {
+  const date = viewDate;
+  await mutate((d) => {
+    const e = TTData.find(d, date, id);
+    if (!e) return;
+    const from = TTCore.short(e);
+    e.accSec = hhmmToSec(str);
+    TTCore.touch(d, e);
+    if (date === d.date && d.timer.activeId === id) d.timer.startedAt = Date.now(); // rebase running timer
+    TTData.log(d, [{ type: "edit-time", id, date, from, to: TTCore.short(e) }]);
+  });
   //! Editing a row's time used to leave the day total stale — every other
   //! mutation re-renders, this one only needs the total refreshed (a full
   //! render would rebuild the selects and drop focus mid-edit).
@@ -412,14 +359,15 @@ function updateDayNav() {
 
 // ---- Day-submitted marking (Task 7: auto + manual, display only) ----
 function daySubmitted(date) {
-  return !!(S.submittedDays && S.submittedDays[date]);
+  return TTCore.isMarked(S.submittedDays && S.submittedDays[date]);
 }
 // Neither of these pushes to Drive/the dashboard itself: the storage write below fires
 // storage.onChanged, which does the ingest push, and gdSyncNow() does the Drive write.
 async function markDaySubmitted(date, method) {
-  S.submittedDays = S.submittedDays || {};
-  S.submittedDays[date] = { at: Date.now(), method };
-  await chrome.storage.local.set({ submittedDays: S.submittedDays });
+  await mutate((d) => {
+    TTCore.setSubmitted(d, date, method);
+    TTData.log(d, [{ type: "mark-submitted", date, method }]);
+  });
   updateSubmittedUI();
   await gdSyncNow();
   //* Dated snapshot of the moment this day was marked. Non-interactive and best-effort: the
@@ -427,12 +375,13 @@ async function markDaySubmitted(date, method) {
   if (typeof gdBackupNow === "function") gdBackupNow(false).catch(() => {});
   if (method === "manual") await nudgeGoogleSignIn();
 }
-//! Unmark writes an explicit null, never deletes the key. The Drive merge is a spread
-//! ({...drive, ...local}), so an absent key lost to Drive's copy and the day came back marked.
+//! Unmark is a stamped {method:null}, never a deleted key — the merge keeps the newest value per
+//! day, so an absent key would lose to another device's older mark and the day would come back.
 async function unmarkDaySubmitted(date) {
-  S.submittedDays = S.submittedDays || {};
-  S.submittedDays[date] = null;
-  await chrome.storage.local.set({ submittedDays: S.submittedDays });
+  await mutate((d) => {
+    TTCore.setSubmitted(d, date, null);
+    TTData.log(d, [{ type: "unmark-submitted", date }]);
+  });
   updateSubmittedUI();
   await gdSyncNow();
 }
@@ -470,10 +419,11 @@ function updateSubmittedUI() {
   }
 }
 // Injected into the form tab after a fill: watches for the "Thank you"
-// completion screen and records a REAL submission (method "auto") straight
-// to storage — the popup may be closed by the time the user hits Submit, so
-// this can't rely on it. Self-contained: no closure refs (executeScript
-// serializes it), content-script context has chrome.storage access.
+// completion screen and records a REAL submission (method "auto") — the
+// popup may be closed by the time the user hits Submit, so this can't rely
+// on it. Self-contained: no closure refs (executeScript serializes it).
+//! It runs in the form page's world, which can't take the extension's data
+//! lock, so the service worker does the write (background.js).
 function watchForSubmit(date) {
   if (window.__ttSubmitWatch) return;
   window.__ttSubmitWatch = setInterval(() => {
@@ -483,11 +433,7 @@ function watchForSubmit(date) {
         .some((n) => (n.textContent || "").trim() === "Create" && n.offsetParent !== null);
       if (txt.includes("thank you") && createGone) {
         clearInterval(window.__ttSubmitWatch);
-        chrome.storage.local.get(["submittedDays"]).then((g) => {
-          const sd = g.submittedDays || {};
-          sd[date] = { at: Date.now(), method: "auto" };
-          chrome.storage.local.set({ submittedDays: sd });
-        });
+        chrome.runtime.sendMessage({ tt: "markSubmitted", date, method: "auto" });
       }
     } catch (e) {}
   }, 1500);
@@ -694,16 +640,16 @@ async function deleteEntry(id) {
   if (S.confirmBeforeDelete !== false) {
     if (!(await showConfirm("Delete this project entry?", "Yes, delete"))) return;
   }
-  if (isTodayView() && S.timer.activeId === id) S.timer = { activeId: null, startedAt: null };
-  const list = currentEntries();
-  const idx = list.findIndex((x) => x.id === id);
-  if (idx >= 0) list.splice(idx, 1);
-  // Tombstone it — otherwise a sync merge would resurrect this entry from
-  // another device that's still holding an older, pre-delete copy.
-  S.deletedEntries = S.deletedEntries || {};
-  S.deletedEntries[id] = Date.now();
-  await chrome.storage.local.set({ deletedEntries: S.deletedEntries });
-  await persistCurrent();
+  const date = viewDate;
+  await mutate((d) => {
+    const list = TTData.list(d, date);
+    const idx = list.findIndex((x) => x.id === id);
+    const gone = idx >= 0 ? list.splice(idx, 1)[0] : null;
+    if (d.timer.activeId === id) d.timer = { activeId: null, startedAt: null };
+    //! Tombstone even when it's already gone here — another device may still hold a copy.
+    TTCore.tombstone(d, id);
+    TTData.log(d, [{ type: "delete", id, date, entry: gone ? TTCore.short(gone) : "(not present locally)" }]);
+  });
   render();
 }
 // ---------- Copy Tasks (Req 1) ----------
@@ -752,13 +698,10 @@ async function confirmCopyTo() {
   const clones = toCopy.map((e) => ({
     id: crypto.randomUUID(), project: e.project, category: e.category, description: e.description, accSec: 0,
   }));
-  if (target === S.date) {
-    S.entries.push(...clones);
-    await chrome.storage.local.set({ entries: S.entries });
-  } else {
-    const list = [...(S.history[target] || []), ...clones];
-    await patchHistoryDay(target, list);
-  }
+  await mutate((d) => {
+    for (const c of clones) TTData.list(d, target).push(TTCore.touch(d, c));
+    TTData.log(d, clones.map((c) => ({ type: "add", id: c.id, date: target, entry: TTCore.short(c), via: "copy" })));
+  });
   $("copyToOverlay").classList.add("hidden");
   copyMode = false;
   copySelected.clear();
@@ -802,22 +745,34 @@ async function submitDraft() {
   const timeStr = formTimeStr();
   const timeSec = /^\d{1,2}:\d{2}$/.test(timeStr) ? hhmmToSec(timeStr) : 0;
   const editingId = S.draft && S.draft.editingId;
-  if (editingId) {
-    const e = currentEntries().find((x) => x.id === editingId);
-    if (e) {
+  const date = viewDate;
+  const missing = await mutate((d) => {
+    if (editingId) {
+      const e = TTData.find(d, date, editingId);
+      if (!e) return true;
+      const from = TTCore.short(e);
       e.project = project; e.category = cat; e.description = desc;
       e.accSec = timeSec;
-      if (isTodayView() && S.timer.activeId === editingId) S.timer.startedAt = Date.now(); // rebase running
+      TTCore.touch(d, e);
+      if (date === d.date && d.timer.activeId === editingId) d.timer.startedAt = Date.now(); // rebase running
+      TTData.log(d, [{ type: "edit", id: e.id, date, from, to: TTCore.short(e) }]);
+    } else {
+      const e = TTCore.touch(d, { id: crypto.randomUUID(), project, category: cat, description: desc, accSec: timeSec });
+      TTData.list(d, date).push(e);
+      TTData.log(d, [{ type: "add", id: e.id, date, entry: TTCore.short(e) }]);
     }
-  } else {
-    if (!isTodayView() && !S.history[viewDate]) S.history[viewDate] = [];
-    currentEntries().push({ id: crypto.randomUUID(), project, category: cat, description: desc, accSec: timeSec });
+    d.set.lastProject = project;
+    d.set.lastCategory = cat;
+    d.set.draft = null;
+    return false;
+  });
+  if (missing) {
+    st.className = "status err";
+    st.textContent = "That entry was deleted in another window or device — nothing saved.";
+    clearDraft();
+    render();
+    return;
   }
-  S.lastProject = project;
-  S.lastCategory = cat;
-  S.draft = null;
-  await persistCurrent();
-  await chrome.storage.local.set({ lastProject: project, lastCategory: cat, draft: null });
   st.className = "status ok";
   st.textContent = editingId ? "Saved." : "Added.";
   refreshAddForm();
@@ -912,59 +867,11 @@ function buildDaysMap() {
   return { ...S.history, [S.date]: S.entries.map((e) => ({ ...e, accSec: elapsedSec(e) })) };
 }
 function buildExportText() {
-  return JSON.stringify(
-    {
-      app: "team-timesheet", v: 1, exportedAt: Date.now(), name: S.name || "",
-      days: buildDaysMap(), submittedDays: S.submittedDays || {},
-      deletedEntries: S.deletedEntries || {},
-    },
-    null, 2
-  );
-}
-// Re-syncs the fields buildExportText()/buildDaysMap() read straight from
-// storage before a Drive sync — a stale context (e.g. tab.html left open
-// while the popup made an edit elsewhere) must not feed gdSync() an outdated
-// "local" snapshot: an id collision's local-wins tie-break would then pick
-// the STALE value over Drive's fresher one, and gdSync's own applyBackupData
-// call writes that reverted value straight back into storage (root cause of
-// a manual time edit silently reverting a couple seconds later — the same
-// mechanism a real restore uses, hence looking like "coming from a backup").
-// Only refreshes entries when storage agrees on which day is "today" — a
-// day-boundary mismatch is rollDayIfNeeded()'s job, not this function's.
-async function refreshLocalStateFromStorage() {
-  const stored = await chrome.storage.local.get(null);
-  if (stored.date === S.date) S.entries = stored.entries || [];
-  S.history = stored.history || {};
-  S.name = stored.name || S.name;
-  S.submittedDays = stored.submittedDays || {};
-  S.deletedEntries = stored.deletedEntries || {};
-}
-// Overwrite all tracked data from a parsed envelope (no confirm — callers
-// confirm/decide). Refreshes whatever views exist in this context.
-async function applyBackupData(obj) {
-  const today = todayStr();
-  const history = {};
-  let todays = [];
-  for (const [date, list] of Object.entries(obj.days || {})) {
-    const clean = (Array.isArray(list) ? list : []).map((e) => ({
-      id: e.id || crypto.randomUUID(),
-      project: e.project, category: e.category, description: e.description,
-      accSec: e.accSec || 0, submitted: !!e.submitted,
-    }));
-    if (date === today) todays = clean; else history[date] = clean;
-  }
-  S.history = history;
-  S.entries = todays;
-  S.timer = { activeId: null, startedAt: null }; // never import a running timer
-  S.date = today;
-  if (obj.name && !S.name) S.name = obj.name;
-  S.submittedDays = obj.submittedDays || {};
-  S.deletedEntries = obj.deletedEntries || {};
-  await chrome.storage.local.set({
-    history: S.history, entries: S.entries, timer: S.timer, date: today, name: S.name,
-    submittedDays: S.submittedDays, deletedEntries: S.deletedEntries,
-  });
-  refreshDataViews();
+  const state = {
+    days: buildDaysMap(), deletedEntries: S.deletedEntries, deletedBy: S.deletedBy,
+    submittedDays: S.submittedDays, clock: S.clock,
+  };
+  return JSON.stringify(TTCore.envelope(state, { name: S.name, deviceId: S.deviceId, deviceName: TTData.DEVICE_NAME }), null, 2);
 }
 function refreshDataViews() {
   if (typeof render === "function") render();
@@ -1117,14 +1024,14 @@ async function finalSubmit() {
     st.textContent = "No projects to submit.";
     return;
   }
-  // Whole flow wrapped in one try/catch — persistCurrent() below writes to
-  // chrome.storage.local, which can throw (e.g. quota exceeded after months
-  // of accumulated history); left unguarded that used to die as an unhandled
-  // rejection with no status message, looking like the extension crashed.
+  // Whole flow wrapped in one try/catch — the storage writes below can throw
+  // (e.g. quota); left unguarded that used to die as an unhandled rejection
+  // with no status message, looking like the extension crashed.
   try {
-    if (isTodayView()) foldActive();
-    await persistCurrent();
+    const date = viewDate;
+    await mutate((d) => { if (date === d.date) TTData.foldTimer(d); });
     render();
+    const list = currentEntries();
     // Check raw elapsed seconds, not the minute-rounded hh:mm display — a
     // 30-59s entry rounds UP to "00:01" and would otherwise slip past.
     const under1min = list.filter((e) => elapsedSec(e) < 60);
@@ -1158,11 +1065,17 @@ async function finalSubmit() {
     // fillFormOnPage processes `list` in order and stops at the first
     // failure, so the first `added` of them are the ones that succeeded.
     const addedCount = out ? out.added : 0;
-    for (let i = 0; i < addedCount; i++) list[i].submitted = true;
+    const sentIds = list.slice(0, addedCount).map((e) => e.id);
     // Dated Drive snapshot right at the moment entries are marked submitted —
     // best-effort: skip quietly if Drive isn't connected or nothing's there yet.
     if (addedCount > 0) {
-      await persistCurrent();
+      await mutate((d) => {
+        for (const id of sentIds) {
+          const e = TTData.find(d, date, id);
+          if (e && !e.submitted) { e.submitted = true; TTCore.touch(d, e); }
+        }
+        TTData.log(d, [{ type: "filled-form", date, entries: sentIds.length }]);
+      });
       render();
       if (typeof gdBackupNow === "function") gdBackupNow(false).catch(() => {});
     }
@@ -1618,17 +1531,25 @@ document.addEventListener("DOMContentLoaded", () => {
   if (chrome.storage.onChanged && chrome.storage.onChanged.addListener) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
+      //* Another window, the service worker or a sync wrote tracked data: refresh this window's cache.
+      if (Object.keys(changes).some((k) => TTData.DATA_KEYS.includes(k))) {
+        const oldDate = S.date;
+        for (const k of Object.keys(changes)) if (TTData.DATA_KEYS.includes(k)) S[k] = changes[k].newValue;
+        adopt();
+        if (viewDate === oldDate && S.date !== oldDate) viewDate = S.date;
+        const main = $("main");
+        if (S.name && main && !main.classList.contains("hidden")) render();
+        if (typeof renderDashboard === "function") renderDashboard();
+        if (typeof renderTimesheet === "function") renderTimesheet();
+      }
       if (changes.submittedDays) {
         const oldVal = changes.submittedDays.oldValue || {};
         const newVal = changes.submittedDays.newValue || {};
-        S.submittedDays = newVal;
         updateSubmittedUI();
         for (const [date, info] of Object.entries(newVal)) {
-          //! `info` is null for a tombstoned (unmarked) day — reading .method off it throws and
-          //! kills the rest of this listener, including the gdSyncSoon() below.
-          if (info) {
-            if (!oldVal[date] || oldVal[date].at !== info.at) pushIngest(date, info.method);
-          } else if (oldVal[date]) {
+          if (TTCore.isMarked(info)) {
+            if (!TTCore.isMarked(oldVal[date]) || oldVal[date].at !== info.at) pushIngest(date, info.method);
+          } else if (TTCore.isMarked(oldVal[date])) {
             pushUnmark(date);
           }
         }

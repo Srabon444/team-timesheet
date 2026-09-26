@@ -197,8 +197,8 @@
 
         <div class="settingsRow" style="display:block">
           <div class="label">Backup &amp; transfer</div>
-          <div class="desc">Export your tracked data, or paste a backup to restore it.
-            The same text imports to/from the desktop app.</div>
+          <div class="desc">Export your tracked data, or paste a backup to add back tasks that are
+            missing here — you pick each one. The same text imports to/from the desktop app.</div>
 
           <label>Export</label>
           <textarea id="exportBox" class="ioBox" rows="4" readonly></textarea>
@@ -206,7 +206,7 @@
 
           <label style="margin-top:10px">Import</label>
           <textarea id="importBox" class="ioBox" rows="4" placeholder="Paste exported data here…"></textarea>
-          <button id="doImport" class="btn primary" style="width:auto">Import</button>
+          <button id="doImport" class="btn primary" style="width:auto">Review &amp; add missing</button>
           <p id="ioStatus" class="status"></p>
         </div>
 
@@ -214,9 +214,11 @@
           <div class="label">Google Drive sync &amp; backup</div>
           <div class="desc">Sign in to sync this data across your devices (extension, desktop, mobile)
             on the same Google account — auto-syncs on open and after edits. Tasks added on any device
-            (even while offline) are merged in, never overridden — nothing gets silently erased. Backups
-            (a rolling <code>latest</code> file + dated snapshots) live in a "Team Timesheet Backups"
-            folder in your own Drive; restore any of them here.</div>
+            (even while offline) are merged in, never overridden — nothing gets silently erased. Each
+            device keeps its own copy plus dated snapshots in a "Team Timesheet Backups" folder in your
+            own Drive; restoring one lets you pick which missing tasks to add back.</div>
+          <p id="gdLegacyWarn" class="status err hidden">A device on the old app version is still syncing to
+            this account. Update the extension / desktop / mobile app on every device.</p>
           <div class="gdriveBtns">
             <button id="gdConnect" class="btn" style="width:auto">Connect Google Drive</button>
             <button id="gdSyncBtn" class="btn primary" style="width:auto" disabled>Sync now</button>
@@ -229,10 +231,24 @@
           <p id="gdStatus" class="status"></p>
         </div>
 
+        <div class="settingsRow" style="display:block">
+          <div class="label">Recovery &amp; activity log</div>
+          <div class="desc">A recovery point is saved on this device before anything removes tasks
+            (a sync, a restore, Reset). Pick one to add missing tasks back. The activity log records
+            every add, edit, delete and sync with where it came from — copy it into a bug report.</div>
+          <div id="recoveryList" class="gdList"></div>
+          <pre id="activityLog" class="ioBox logBox"></pre>
+          <button id="copyLog" class="btn" style="width:auto">Copy activity log</button>
+          <p id="recoveryStatus" class="status"></p>
+        </div>
+
         <div class="dangerZone">
           <div class="label">Reset everything</div>
-          <div class="desc">Deletes all tasks, history, and settings. Cannot be undone. Your name is kept.</div>
-          <button id="resetEverything" class="btn danger" style="width:auto">Reset</button>
+          <div class="desc">Deletes all tasks, history, and settings on every synced device. Your name is
+            kept, and a recovery point is saved first. Type RESET to enable the button.</div>
+          <input id="resetConfirmInput" type="text" autocomplete="off" placeholder="Type RESET" style="width:auto">
+          <button id="resetEverything" class="btn danger" style="width:auto" disabled>Reset</button>
+          <p id="resetStatus" class="status"></p>
         </div>
       </section>
     </main>
@@ -245,6 +261,23 @@
       <div class="confirmActions">
         <button id="confirmNo" class="btn">Cancel</button>
         <button id="confirmYes" class="btn danger">Yes, submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Restore picker: every task a backup holds that is missing here, each ticked ✓ or ✗ -->
+  <div id="restoreOverlay" class="overlay hidden">
+    <div class="confirmBox restoreBox">
+      <p id="restoreTitle"></p>
+      <div class="restoreBulk">
+        <button id="restoreAllYes" class="btn" style="width:auto">✓ All</button>
+        <button id="restoreAllNo" class="btn" style="width:auto">✗ All</button>
+      </div>
+      <div id="restoreList" class="restoreList"></div>
+      <p id="restoreStatus" class="status"></p>
+      <div class="confirmActions">
+        <button id="restoreCancel" class="btn">Cancel</button>
+        <button id="restoreApply" class="btn primary">Add 0 task(s)</button>
       </div>
     </div>
   </div>
@@ -287,6 +320,8 @@
     </div>
   </div>
 
+  <script src="sync-core.js"></script>
+  <script src="data.js"></script>
   <script src="prayer-hadiths.js"></script>
   <script src="prayer.js"></script>
   <script src="popup.js"></script>

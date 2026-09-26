@@ -7,7 +7,7 @@
 
 //* Pure helpers + the reminder texts; prayer.js's networked half is never called from here —
 //* the service worker only reads the month cache the popup already fetched.
-importScripts("prayer.js", "prayer-hadiths.js");
+importScripts("prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js");
 
 const ALARM = "tick";
 const PRAYER_ALARM = "prayerTick";
@@ -139,3 +139,13 @@ chrome.runtime.onInstalled.addListener(() => { syncBadge(); checkDailyLimit(); s
 chrome.runtime.onStartup.addListener(() => { syncBadge(); checkDailyLimit(); syncPrayerAlarm(); });
 syncBadge(); // service worker (re)start while a timer was already running
 syncPrayerAlarm();
+
+//* The Fillout tab's "Thank you" watcher (popup.js watchForSubmit) can't take the data lock from the
+//* form page, so it hands the mark to the worker, which writes it like any other change.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || msg.tt !== "markSubmitted" || !/^\d{4}-\d{2}-\d{2}$/.test(String(msg.date))) return;
+  TTData.withData((d) => {
+    TTCore.setSubmitted(d, msg.date, msg.method === "manual" ? "manual" : "auto");
+    TTData.log(d, [{ type: "mark-submitted", date: msg.date, method: "auto", via: "form tab" }]);
+  }).catch((e) => console.error("mark submitted failed", e));
+});
