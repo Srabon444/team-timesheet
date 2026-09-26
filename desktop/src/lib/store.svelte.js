@@ -16,15 +16,18 @@ import * as timer from "./timer.js";
 import { parseNames, parseDropdownOptions } from "./names.js";
 import { buildFillScript } from "./fillout-inject.js";
 import { gdBackupNow, gdSyncNow, timesheetIngest, gdConnected, gdConnect } from "./gdrive.js";
+import { TT, logEvents, addRecoveryPoint } from "./activity.js";
 import * as prayer from "./prayer.js";
 import { prayerReminderAt } from "./prayer-hadiths.js";
 
 function defaults() {
   return {
     days: {},
-    submittedDays: {}, // { date: { at: ts, method: "auto"|"manual" } } — show-only
-    deletedEntries: {}, // { entryId: deletedAtMs } — tombstones so sync merge doesn't resurrect a deleted entry
-    gdLastBackupSig: null, // signature of the last dated Drive snapshot actually written — see gdBackupNow()
+    submittedDays: {}, // { date: { at, method: "auto"|"manual"|null, by } } — null method = unmarked
+    deletedEntries: {}, // { entryId: deletedAt } — tombstones; an entry stays live only if updated after it
+    deletedBy: {}, // { entryId: deviceId } — who deleted it, for the activity log
+    clock: 0, // hybrid logical clock for stamps (sync-core.js)
+    deviceId: "", // this install's id; names its own file on Drive
     timer: { activeId: null, startedAt: null, date: null },
     name: "",
     names: [],
@@ -44,6 +47,9 @@ export const app = $state({
   data: defaults(),
   loaded: false,
   gdriveNeedsReconnect: false, // Drive token revoked/expired mid-session — banner until user reconnects
+  loadError: "", // data.json couldn't be read at startup — banner
+  saveBlocked: false, // data.json exists but is unreadable (e.g. locked): never save over it
+  saveError: "", // the last save failed — banner until one succeeds
   now: Date.now(), // ticked every second; reading it makes timer displays live
   fill: { running: false, added: 0, message: "", error: "" },
   confirm: null, // { message, yesLabel, resolve }
@@ -56,12 +62,34 @@ export function goToDate(date) {
   nav.page = "timer";
 }
 
-let saveTimer = null;
+//* Saves run immediately and one at a time; changes made while a save is in flight are written by
+//* the next pass. The old 150ms debounce lost the last edit whenever the app closed (or Android
+//* killed it) inside that window, and swallowed every save error.
+let saving = false;
+let dirty = false;
 export function save() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    invoke("save_data", { json: JSON.stringify(app.data) }).catch(() => {});
-  }, 150);
+  if (app.saveBlocked) return; //! the file on disk couldn't be read — never overwrite it
+  dirty = true;
+  if (!saving) flushSaves();
+}
+async function flushSaves() {
+  saving = true;
+  try {
+    while (dirty) {
+      await Promise.resolve(); // coalesce changes made in the same tick
+      dirty = false;
+      try {
+        await invoke("save_data", { json: JSON.stringify(app.data) });
+        if (app.saveError) app.saveError = "";
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        if (app.saveError !== msg) logEvents([{ type: "save-error", error: msg }]);
+        app.saveError = msg;
+      }
+    }
+  } finally {
+    saving = false;
+  }
 }
 
 export function resolveTheme(theme) {
@@ -77,14 +105,21 @@ export function applyTheme(theme) {
 }
 
 export async function load() {
+  let stored = {};
   try {
-    const json = await invoke("load_data");
-    const stored = JSON.parse(json || "{}");
-    app.data = { ...defaults(), ...stored };
-    app.data.timer = { activeId: null, startedAt: null, date: null, ...(stored.timer || {}) };
-  } catch {
-    app.data = defaults();
+    stored = JSON.parse((await invoke("load_data")) || "{}");
+  } catch (e) {
+    //! "unreadable" = the file is there but locked/unreadable: block saving so it's never replaced.
+    //! "corrupt" = Rust already copied it aside, so starting fresh (and re-syncing) is safe.
+    const msg = String((e && e.message) || e);
+    app.loadError = msg;
+    app.saveBlocked = !/^corrupt/.test(msg);
+    logEvents([{ type: "load-error", error: msg }]);
+    stored = {};
   }
+  app.data = { ...defaults(), ...stored };
+  app.data.timer = { activeId: null, startedAt: null, date: null, ...(stored.timer || {}) };
+  TT.ensureMeta(app.data);
   document.documentElement.dataset.theme = resolveTheme(app.data.theme);
   timer.rolloverIfNeeded(app.data);
   app.loaded = true;
@@ -95,35 +130,46 @@ export async function load() {
 }
 
 // ---------- timer / entry actions (persisting wrappers) ----------
+const findEntry = (date, id) => timer.entriesFor(app.data, date).find((e) => e.id === id) || null;
 export function startEntryTimer(date, id) {
   timer.startTimer(app.data, date, id);
   save();
 }
 export function pauseEntryTimer() {
+  const { activeId, date } = app.data.timer;
   timer.pauseTimer(app.data);
   save();
+  const e = activeId && findEntry(date, activeId);
+  if (e) logEvents([{ type: "timer-stop", id: e.id, date, entry: TT.short(e) }]);
 }
 export function setEntryTime(date, id, hhmm) {
+  const e = findEntry(date, id);
+  const from = e && TT.short(e);
   timer.editTime(app.data, date, id, hhmm);
   save();
+  if (e) logEvents([{ type: "edit-time", id, date, from, to: TT.short(e) }]);
 }
 export function addEntry(date, fields) {
   const e = timer.addEntry(app.data, date, fields);
   save();
+  logEvents([{ type: "add", id: e.id, date, entry: TT.short(e) }]);
   return e;
 }
 export function updateEntry(date, id, fields) {
+  const before = findEntry(date, id);
+  const from = before && TT.short(before);
   const e = timer.updateEntry(app.data, date, id, fields);
   save();
+  if (e) logEvents([{ type: "edit", id, date, from, to: TT.short(e) }]);
   return e;
 }
 export function removeEntry(date, id) {
+  const gone = findEntry(date, id);
   timer.deleteEntry(app.data, date, id);
-  // Tombstone it — otherwise a sync merge would resurrect this entry from
-  // another device that's still holding an older, pre-delete copy.
-  app.data.deletedEntries = app.data.deletedEntries || {};
-  app.data.deletedEntries[id] = Date.now();
+  //! Tombstone even when it's already gone here — another device may still hold a copy.
+  TT.tombstone(app.data, id);
   save();
+  logEvents([{ type: "delete", id, date, entry: gone ? TT.short(gone) : "(not present locally)" }]);
 }
 export function entryElapsed(entry) {
   void app.now; // subscribe to the tick so displays update every second
@@ -138,21 +184,21 @@ export function activeEntry() {
 
 // ---------- submission status (Task 7) ----------
 export async function markDaySubmitted(date, method = "manual") {
-  if (!app.data.submittedDays) app.data.submittedDays = {};
-  app.data.submittedDays[date] = { at: Date.now(), method };
+  TT.setSubmitted(app.data, date, method);
   save();
+  logEvents([{ type: "mark-submitted", date, method }]);
   //* No direct ingest call here: gdSyncNow() pushes every submitted day it knows about, using the
   //* merged (and correctly folded) entries. Pushing here too just sent the same day twice.
   await gdSyncNow();
   gdBackupNow(false).catch(() => {}); // dated snapshot of the moment this day was marked, best-effort
   if (method === "manual") await nudgeGoogleSignIn();
 }
-//! Unmark writes an explicit null, never deletes the key. The Drive merge is a spread
-//! ({...drive, ...local}), so an absent key lost to Drive's copy and the day came back marked.
+//! Unmark is a stamped {method:null}, never a deleted key — the merge keeps the newest value per
+//! day, so an absent key would lose to another device's older mark and the day would come back.
 export async function unmarkDaySubmitted(date) {
-  if (!app.data.submittedDays) app.data.submittedDays = {};
-  app.data.submittedDays[date] = null;
+  TT.setSubmitted(app.data, date, null);
   save();
+  logEvents([{ type: "unmark-submitted", date }]);
   if (await gdConnected()) {
     await timesheetIngest(app.data.name, date, "unmark", []).catch((e) =>
       console.error("timesheetIngest unmark failed for", date, e)
@@ -175,7 +221,38 @@ async function nudgeGoogleSignIn() {
   try { await gdConnect(); } catch { app.gdriveNeedsReconnect = true; }
 }
 export function daySubmitted(date) {
-  return app.data.submittedDays ? app.data.submittedDays[date] : null;
+  const info = app.data.submittedDays ? app.data.submittedDays[date] : null;
+  return TT.isMarked(info) ? info : null;
+}
+
+// ---------- restore / reset ----------
+//* A restore only ever ADDS the tasks the user ticked; nothing current is removed or overwritten.
+export function restoreCandidates(backup) {
+  return TT.restoreCandidates(TT.stateOf(app.data), backup);
+}
+export function restorePicked(picked, source) {
+  addRecoveryPoint(TT.stateOf(app.data), `before restoring from ${source}`);
+  const added = TT.applyRestore(app.data, app.data.days, picked);
+  save();
+  logEvents([{ type: "restore", source, added: added.length },
+    ...added.map((x) => ({ type: "add", id: x.e.id, date: x.date, entry: TT.short(x.e), via: "restore" }))]);
+  return added.length;
+}
+export function resetEverything() {
+  addRecoveryPoint(TT.stateOf(app.data), "before Reset Everything");
+  let n = 0;
+  //* Tombstones propagate the reset to other devices instead of them pulling everything back.
+  for (const list of Object.values(app.data.days)) for (const e of list) { TT.tombstone(app.data, e.id); n++; }
+  app.data.days = {};
+  app.data.timer = { activeId: null, startedAt: null, date: null };
+  app.data.lastProject = null;
+  app.data.lastCategory = null;
+  app.data.dailyLimitHours = 8;
+  app.data.warnedDate = null;
+  app.data.confirmBeforeDelete = true;
+  applyTheme("dark");
+  save();
+  logEvents([{ type: "reset", tombstoned: n }]);
 }
 
 // ---------- confirm modal (promise-based, per-action labels) ----------
