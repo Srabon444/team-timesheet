@@ -16,6 +16,10 @@
   const DRIVE = "https://www.googleapis.com/drive/v3/files";
   const UPLOAD = "https://www.googleapis.com/upload/drive/v3/files";
   const LOG_MAX = 500;
+  //! Any time at or past this is junk: one corrupt file with Infinity/1e20 would otherwise pin the
+  //! clock there, so every later stamp ties and edits/deletes stop taking effect on every device.
+  const MAX_TIME = Date.UTC(2100, 0, 1);
+  const time = (v) => { const n = Number(v); return n > 0 && n < MAX_TIME ? n : 0; };
 
   const uuid = () => (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID()
     : "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
@@ -25,7 +29,7 @@
   //* version always beats it even if this device's wall clock runs behind the other one's.
   function ensureMeta(d) {
     if (!d.deviceId) d.deviceId = uuid();
-    if (typeof d.clock !== "number" || !isFinite(d.clock)) d.clock = 0;
+    if (!time(d.clock)) d.clock = 0;
     if (!d.deletedEntries || typeof d.deletedEntries !== "object") d.deletedEntries = {};
     if (!d.deletedBy || typeof d.deletedBy !== "object") d.deletedBy = {};
     if (!d.submittedDays || typeof d.submittedDays !== "object") d.submittedDays = {};
@@ -57,10 +61,10 @@
   }
 
   // ---- entries ----------------------------------------------------------------
-  const ts = (e) => Number(e && e.updatedAt) || 0;
+  const ts = (e) => time(e && e.updatedAt);
   const tomb = (deleted, id) => {
     const v = deleted && deleted[id];
-    return v === undefined || v === null ? null : Number(v) || 0;
+    return v === undefined || v === null ? null : time(v);
   };
   function isLive(e, deleted) {
     const t = tomb(deleted, e.id);
@@ -71,7 +75,7 @@
       id: String(e.id), project: e.project || "", category: e.category || "",
       description: e.description || "", accSec: Number(e.accSec) || 0, submitted: !!e.submitted,
     };
-    if (e.updatedAt) out.updatedAt = Number(e.updatedAt) || 0;
+    if (time(e.updatedAt)) out.updatedAt = time(e.updatedAt);
     if (e.updatedBy) out.updatedBy = String(e.updatedBy);
     return out;
   }
@@ -88,7 +92,7 @@
     const ac = canon(a), bc = canon(b);
     return ac === bc ? 0 : ac > bc ? 1 : -1;
   }
-  const subAt = (i) => (i && Number(i.at)) || 0;
+  const subAt = (i) => time(i && i.at);
   function normSub(i) {
     if (i === null || i === undefined) return { at: 0, method: null, by: "" };
     return { at: subAt(i), method: i.method || null, by: i.by || "" };
@@ -115,12 +119,12 @@
     }
     const deletedEntries = {};
     //! A tombstone must be a real time: a junk/zero one would silently kill every unstamped entry.
-    for (const [id, t] of Object.entries(o.deletedEntries || {})) if (Number(t) > 0) deletedEntries[id] = Number(t);
+    for (const [id, t] of Object.entries(o.deletedEntries || {})) if (time(t)) deletedEntries[id] = time(t);
     const submittedDays = {};
     for (const [d, i] of Object.entries(o.submittedDays || {})) submittedDays[d] = normSub(i);
     return {
       days, deletedEntries, submittedDays,
-      deletedBy: { ...(o.deletedBy || {}) }, clock: Number(o.clock) || 0,
+      deletedBy: { ...(o.deletedBy || {}) }, clock: time(o.clock),
     };
   }
 
