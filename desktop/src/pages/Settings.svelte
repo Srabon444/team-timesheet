@@ -1,6 +1,9 @@
 <script>
-  import { app, save, applyTheme, fetchNames, fetchProjectsAndCategories, showConfirm } from "../lib/store.svelte.js";
-  import { gdConnected, gdConnect, gdDisconnect, gdSync, gdBackupNow, gdListBackups, gdRestoreFile } from "../lib/gdrive.js";
+  import { app, save, applyTheme, fetchNames, fetchProjectsAndCategories, showConfirm,
+    restoreCandidates, restorePicked, resetEverything as resetAll } from "../lib/store.svelte.js";
+  import { gdConnected, gdConnect, gdDisconnect, gdSync, gdBackupNow, gdListBackups, gdDownloadBackup } from "../lib/gdrive.js";
+  import { TT, deviceName, readLog, listRecovery } from "../lib/activity.js";
+  import RestorePicker from "../components/RestorePicker.svelte";
   import PrayerModal from "../components/PrayerModal.svelte";
   import SearchSelect from "../components/SearchSelect.svelte";
 
@@ -38,19 +41,57 @@
     fetchingPC = false;
   }
 
-  // ---- Backup / transfer (Task 1: manual export/paste bridge) ----
-  // A small versioned envelope holding just the portable data (days + name).
-  // Device-local bits (timer, theme, limit) stay out on purpose. The same
-  // text pastes into the Chrome extension's Import box.
+  // ---- Backup / transfer (manual export/paste bridge) ----
+  // The same sync envelope the Drive files use; pastes into the Chrome extension's Import box.
+  // Device-local bits (timer, theme, limit) stay out on purpose.
   const exportText = $derived(
-    JSON.stringify(
-      {
-        app: "team-timesheet", v: 1, exportedAt: Date.now(), name: app.data.name,
-        days: app.data.days, submittedDays: app.data.submittedDays,
-      },
-      null, 2
-    )
+    JSON.stringify(TT.envelope(app.data, { name: app.data.name, deviceId: app.data.deviceId, deviceName: deviceName() }), null, 2)
   );
+
+  // ---- Restore picker (Drive backups, paste import, recovery points) ----
+  let picker = $state(null); // { cands, source, resolve }
+  function pick(obj, source) {
+    const cands = restoreCandidates(obj);
+    if (!cands.length) return Promise.resolve({ none: true });
+    return new Promise((resolve) => { picker = { cands, source, resolve }; });
+  }
+  function pickerDone(result) {
+    const p = picker;
+    picker = null;
+    p.resolve(result);
+    refreshRecoveryAndLog();
+  }
+  function restoreMessage(res, source) {
+    if (res.none) return `Nothing missing — every task in ${source} is already here.`;
+    if (res.cancelled) return "Restore cancelled.";
+    return `Added ${res.added} task(s) back from ${source} ✓`;
+  }
+
+  // ---- Recovery points + activity log ----
+  let recovery = $state([]);
+  let log = $state([]);
+  let recMsg = $state("");
+  async function refreshRecoveryAndLog() {
+    try { recovery = await listRecovery(); } catch { recovery = []; }
+    try { log = (await readLog(300)).reverse(); } catch { log = []; }
+  }
+  refreshRecoveryAndLog();
+  async function reviewRecovery(p) {
+    const label = "the recovery point from " + new Date(p.at).toLocaleString();
+    recMsg = restoreMessage(await pick(p.env, label), label);
+  }
+  function logText(ev) {
+    const what = ev.entry || (ev.from ? `${ev.from} -> ${ev.to}` : "") || ev.reason || ev.detail || ev.status || ev.error || "";
+    const extra = ["added", "removed", "changed", "tombstoned", "entries"].filter((k) => ev[k] !== undefined).map((k) => `${k}=${ev[k]}`).join(" ");
+    return `${ev.t} [${ev.dev || "?"}] ${ev.type}${ev.date ? " " + ev.date : ""}${ev.source ? " (" + ev.source + ")" : ""} ${what}${ev.reason && ev.entry ? " — " + ev.reason : ""} ${extra}`.trim();
+  }
+  async function copyLog() {
+    const text = JSON.stringify({ app: "team-timesheet", deviceId: app.data.deviceId, device: deviceName(), copiedAt: new Date().toISOString(), log: [...log].reverse() }, null, 1);
+    try { await navigator.clipboard.writeText(text); recMsg = "Activity log copied — paste it into the issue."; }
+    catch { recMsg = "Copy failed."; }
+  }
+  const legacySeen = $derived(!!app.data.gdLegacyClientAt && Date.now() - app.data.gdLegacyClientAt < 14 * 864e5);
+  let resetWord = $state("");
   let importText = $state("");
   let ioMsg = $state("");
 
@@ -76,19 +117,9 @@
       ioMsg = "No 'days' data found in that text.";
       return;
     }
-    const n = Object.keys(obj.days).length;
-    const ok = await showConfirm(
-      `Replace all tracked data with this import (${n} day${n === 1 ? "" : "s"})? Your current data is overwritten.`,
-      "Yes, import"
-    );
-    if (!ok) return;
-    app.data.days = obj.days;
-    app.data.submittedDays = obj.submittedDays || {};
-    if (obj.name && !app.data.name) app.data.name = obj.name;
-    app.data.timer = { activeId: null, startedAt: null, date: null }; // never import a running timer
-    save();
-    importText = "";
-    ioMsg = `Imported ${n} day${n === 1 ? "" : "s"}.`;
+    const res = await pick(obj, "the pasted data");
+    ioMsg = restoreMessage(res, "the pasted data");
+    if (res.added) importText = "";
   }
 
   // ---- Google Drive sync & backup ----
@@ -113,50 +144,44 @@
     gdBusy = true; gdMsg = "Syncing…";
     try { gdMsg = await gdSync(true) || "Done."; } catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
+    refreshRecoveryAndLog();
   }
   async function gdDoBackup() {
     gdBusy = true; gdMsg = "Backing up…";
     try { const wrote = await gdBackupNow(); gdMsg = wrote ? "Backed up to Google Drive ✓" : "Already up to date — nothing new to back up."; } catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
+    refreshRecoveryAndLog();
   }
   async function gdDoRestore() {
     gdBusy = true; gdMsg = "Loading backups…";
-    try { gdFiles = await gdListBackups(); gdMsg = gdFiles.length ? `${gdFiles.length} backup(s) — pick one to restore.` : "No backups found in Drive."; }
+    try { gdFiles = await gdListBackups(); gdMsg = gdFiles.length ? `${gdFiles.length} backup(s) — pick one to review what's missing.` : "No backups found in Drive."; }
     catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
   }
   async function gdPick(f) {
-    if (!(await showConfirm(`Restore "${f.name}"? Current data is overwritten.`, "Yes, restore"))) return;
-    gdBusy = true; gdMsg = `Restoring ${f.name}…`;
-    try { await gdRestoreFile(f.id); gdFiles = null; gdMsg = `Restored from ${f.name} ✓`; }
+    gdBusy = true; gdMsg = `Reading ${f.name}…`;
+    let obj = null;
+    try { obj = await gdDownloadBackup(f.id); }
     catch (e) { gdMsg = e.message || String(e); await gdRefresh(); }
     gdBusy = false;
+    if (!obj) return;
+    const res = await pick(obj, f.name);
+    gdMsg = restoreMessage(res, f.name);
+    if (res.added) gdFiles = null;
   }
 
   async function resetEverything() {
+    //! The typed word guards against the misclick that once wiped every device; checked here too,
+    //! not only through the button's disabled state.
+    if (resetWord.trim() !== "RESET") return;
     const ok = await showConfirm(
-      "Delete all tasks, history, and settings? This cannot be undone. Your name is kept.",
+      "Delete all tasks, days, and settings on every synced device? Your name is kept, and a local recovery point is saved first.",
       "Yes, reset"
     );
     if (!ok) return;
-    const { name, names } = app.data;
-    // Tombstone every entry that existed — otherwise a sync merge would just
-    // pull them all back in from Drive/another device right after.
-    const deletedEntries = { ...(app.data.deletedEntries || {}) };
-    const now = Date.now();
-    for (const list of Object.values(app.data.days)) for (const e of list) deletedEntries[e.id] = now;
-    app.data.days = {};
-    app.data.deletedEntries = deletedEntries;
-    app.data.timer = { activeId: null, startedAt: null, date: null };
-    app.data.lastProject = null;
-    app.data.lastCategory = null;
-    app.data.dailyLimitHours = 8;
-    app.data.warnedDate = null;
-    app.data.confirmBeforeDelete = true;
-    app.data.name = name;
-    app.data.names = names;
-    applyTheme("dark");
-    save();
+    resetAll();
+    resetWord = "";
+    refreshRecoveryAndLog();
   }
 </script>
 
@@ -227,8 +252,8 @@
 
 <section>
   <h2>Backup &amp; transfer</h2>
-  <p class="muted small">Export your tracked data, or paste a backup to restore it.
-    The same text imports into the Chrome extension.</p>
+  <p class="muted small">Export your tracked data, or paste a backup to add back tasks that are missing
+    here — you pick each one. The same text imports into the Chrome extension.</p>
 
   <div class="setlbl">Export</div>
   <textarea class="io" readonly rows="4" value={exportText}></textarea>
@@ -236,7 +261,7 @@
 
   <div class="setlbl mt">Import</div>
   <textarea class="io" rows="4" bind:value={importText} placeholder="Paste exported data here…"></textarea>
-  <button class="btn primary" onclick={doImport} disabled={!importText.trim()}>Import</button>
+  <button class="btn primary" onclick={doImport} disabled={!importText.trim()}>Review &amp; add missing</button>
 
   {#if ioMsg}<p class="muted small">{ioMsg}</p>{/if}
 </section>
@@ -245,8 +270,13 @@
   <h2>Google Drive sync &amp; backup</h2>
   <p class="muted small">Sign in to sync this data across your devices (desktop, mobile, extension) on the
     same Google account — auto-syncs on open and after edits. Tasks added on any device (even while
-    offline) are merged in, never overridden — nothing gets silently erased. Backups live in a "Team
-    Timesheet Backups" folder in your own Drive.</p>
+    offline) are merged in, never overridden — nothing gets silently erased. Each device keeps its own
+    copy plus dated snapshots in a "Team Timesheet Backups" folder in your own Drive; restoring one lets
+    you pick which missing tasks to add back.</p>
+  {#if legacySeen}
+    <p class="warn small">A device on the old app version is still syncing to this account. Update the
+      extension / desktop / mobile app on every device.</p>
+  {/if}
 
   <div class="gdbtns">
     {#if !gdIsConnected}
@@ -289,15 +319,50 @@
   </button>
 </section>
 
+<section>
+  <h2>Recovery &amp; activity log</h2>
+  <p class="muted small">A recovery point is saved on this device before anything removes tasks (a sync,
+    a restore, Reset). Pick one to add missing tasks back. The activity log records every add, edit,
+    delete and sync with where it came from — copy it into a bug report.</p>
+  {#if recovery.length}
+    <div class="gdlist">
+      {#each recovery as p}
+        <button class="gdfile" onclick={() => reviewRecovery(p)}>
+          <span class="gdname">{p.reason} ({TT.counts(p.env).entries} tasks)</span>
+          <span class="gdwhen muted">{new Date(p.at).toLocaleString()}</span>
+        </button>
+      {/each}
+    </div>
+  {:else}
+    <p class="muted small">No recovery points yet.</p>
+  {/if}
+  <pre class="io log">{log.length ? log.slice(0, 200).map(logText).join("\n") : "No activity recorded yet."}</pre>
+  <button class="btn" onclick={copyLog}>Copy activity log</button>
+  {#if recMsg}<p class="muted small">{recMsg}</p>{/if}
+</section>
+
 <section class="danger">
   <div class="setrow">
     <div>
       <div class="setlbl">Reset everything</div>
-      <div class="setdesc muted">Deletes all tasks, days, and settings. Cannot be undone. Your name is kept.</div>
+      <div class="setdesc muted">Deletes all tasks, days, and settings on every synced device. Your name is kept,
+        and a recovery point is saved first. Type RESET to enable the button.</div>
     </div>
-    <button class="btn danger" onclick={resetEverything}>Reset</button>
+    <div class="resetbox">
+      <input class="narrow" placeholder="Type RESET" bind:value={resetWord} />
+      <button class="btn danger" onclick={resetEverything} disabled={resetWord.trim() !== "RESET"}>Reset</button>
+    </div>
   </div>
 </section>
+
+{#if picker}
+  <RestorePicker
+    cands={picker.cands}
+    source={picker.source}
+    onapply={(picked) => pickerDone({ added: restorePicked(picked, picker.source) })}
+    oncancel={() => pickerDone({ cancelled: true })}
+  />
+{/if}
 
 {#if prayerOpen}
   <PrayerModal onclose={() => (prayerOpen = false)} />
@@ -336,5 +401,8 @@
   .toggle { width: 20px; height: 20px; accent-color: var(--accent); }
   .themes { display: flex; gap: 10px; }
   .danger { border: 1px solid var(--danger); border-radius: 10px; padding: 4px 16px; }
-  .danger .setrow { border-bottom: none; }
+  .danger .setrow { border-bottom: none; flex-wrap: wrap; }
+  .resetbox { display: flex; gap: 8px; align-items: center; }
+  .log { max-height: 240px; overflow: auto; white-space: pre-wrap; font-size: 11px; }
+  .warn { color: var(--danger-light); }
 </style>

@@ -90,6 +90,17 @@
       <button class="gdrive-alert-close" onclick={() => (dismissed = true)} title="Dismiss">✕</button>
     </div>
   {/if}
+  {#if app.loadError}
+    <div class="gdrive-alert">
+      <span class="gdrive-alert-msg">⚠ Your saved data couldn't be read ({app.loadError}).
+        {app.saveBlocked ? "Nothing will be saved until the app restarts, so the file isn't overwritten." : "Synced tasks come back from Google Drive; see Settings → Recovery."}</span>
+    </div>
+  {/if}
+  {#if app.saveError}
+    <div class="gdrive-alert">
+      <span class="gdrive-alert-msg">⚠ Couldn't save your data ({app.saveError}). Your latest changes are not on disk yet.</span>
+    </div>
+  {/if}
 
   <div class="body">
     <nav class="sidebar">
