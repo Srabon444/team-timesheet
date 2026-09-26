@@ -126,6 +126,27 @@ describe("sync v2 across devices", () => {
   });
 });
 
+describe("running timer across a sync", () => {
+  beforeEach(() => vi.resetModules());
+
+  it("a pull never double-counts or drops a running timer's seconds", async () => {
+    const drive = makeFakeDrive();
+    const b = await device(drive, "B", [{ id: "other" }]);
+    await b.gd.gdSync(false);
+    const a = await device(drive, "A", [{ id: "run", accSec: 60 }]);
+    const startedAt = Date.now() - 120000;
+    a.app.data.timer = { activeId: "run", startedAt, date: D };
+    await a.gd.gdSync(false);
+    const e = a.app.data.days[D].find((x) => x.id === "run");
+    expect(a.ids()).toBe("other,run");
+    expect(a.app.data.timer).toEqual({ activeId: "run", startedAt, date: D });
+    expect(e.accSec).toBe(60); // live seconds stay in the timer, not folded twice
+    const live = e.accSec + (Date.now() - startedAt) / 1000;
+    expect(live).toBeGreaterThan(179);
+    expect(live).toBeLessThan(185);
+  });
+});
+
 describe("local persistence safety", () => {
   beforeEach(() => vi.resetModules());
 
