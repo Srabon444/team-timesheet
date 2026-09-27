@@ -57,8 +57,8 @@ function weekDates(mondayStr) {
 function weekTotals(daysMap, mondayStr) {
   return weekDates(mondayStr).map((date) => ({ date, total: dayTotal(daysMap[date]) }));
 }
-// buildDaysMap / buildExportText / applyBackupData live in popup.js now (shared
-// with the popup and gdrive.js sync). tab.js just uses them as globals.
+// buildDaysMap / buildExportText / mutate live in popup.js (shared with the
+// popup and gdrive.js sync). tab.js just uses them as globals.
 
 let weekOffset = 0; // 0 = week containing today, -1 = previous week, etc.
 let tsWeekOffset = 0; // same idea, independent state for the Timesheet panel
@@ -188,6 +188,10 @@ function renderSettings() {
   const ex = document.getElementById("exportBox");
   if (ex) ex.value = buildExportText();
   if (typeof gdRefreshUI === "function") gdRefreshUI();
+  const legacy = document.getElementById("gdLegacyWarn");
+  if (legacy) legacy.classList.toggle("hidden", !(S.gdLegacyClientAt && Date.now() - S.gdLegacyClientAt < 14 * 864e5));
+  renderRecovery();
+  renderActivityLog();
 }
 
 // ---- Backup / transfer (Task 1: manual bridge, same envelope as the app) ----
@@ -200,17 +204,83 @@ async function copyExport() {
     st.className = "status err"; st.textContent = "Copy failed — select the text and copy manually.";
   }
 }
-// Apply a parsed backup envelope (same shape as buildExportText / the app's
-// export). Confirms first, overwrites all tracked data, returns the day count
-// (or null if invalid / cancelled). Shared by paste-import and Drive-restore.
-async function applyImport(obj) {
+// ---- Restore picker (Drive backups, paste import, local recovery points) ----
+//* A restore only ever ADDS the tasks the user ticks ✓; nothing current is removed or overwritten.
+let restorePick = null; // { cands, choice[], source, resolve }
+
+async function openRestorePicker(obj, source) {
   if (!obj || typeof obj.days !== "object" || obj.days === null) return { error: "No 'days' data found." };
-  const n = Object.keys(obj.days).length;
-  if (!(await showConfirm(`Replace all tracked data with this backup (${n} day(s))? Current data is overwritten.`, "Yes, restore"))) {
-    return { cancelled: true };
+  const current = TTCore.stateOf(TTData.toDoc(await chrome.storage.local.get(null)));
+  const cands = TTCore.restoreCandidates(current, obj);
+  if (!cands.length) return { none: true };
+  return new Promise((resolve) => {
+    restorePick = { cands, choice: cands.map(() => null), source, resolve };
+    document.getElementById("restoreTitle").textContent =
+      `${cands.length} task(s) in ${source} are not in your data now. Tick ✓ to add a task back, ✗ to leave it out.`;
+    document.getElementById("restoreStatus").textContent = "";
+    renderRestoreList();
+    document.getElementById("restoreOverlay").classList.remove("hidden");
+  });
+}
+function renderRestoreList() {
+  const box = document.getElementById("restoreList");
+  box.innerHTML = "";
+  let lastDate = null;
+  restorePick.cands.forEach((c, i) => {
+    if (c.date !== lastDate) {
+      lastDate = c.date;
+      const h = document.createElement("div");
+      h.className = "rDate";
+      h.textContent = c.date;
+      box.appendChild(h);
+    }
+    const row = document.createElement("div");
+    const ch = restorePick.choice[i];
+    row.className = "rRow" + (ch === true ? " yes" : ch === false ? " no" : "");
+    row.innerHTML = `<span class="rMain"><span class="proj"></span> · <span class="cat"></span><span class="rDesc"></span></span>
+      <span class="mono rTime"></span>
+      <button class="rYes" title="Add this task back">✓</button><button class="rNo" title="Leave it out">✗</button>`;
+    row.querySelector(".proj").textContent = c.entry.project;
+    row.querySelector(".cat").textContent = c.entry.category;
+    row.querySelector(".rDesc").textContent = c.entry.description;
+    row.querySelector(".rTime").textContent = secToHHMM(c.entry.accSec || 0);
+    row.querySelector(".rYes").onclick = () => { restorePick.choice[i] = true; renderRestoreList(); };
+    row.querySelector(".rNo").onclick = () => { restorePick.choice[i] = false; renderRestoreList(); };
+    box.appendChild(row);
+  });
+  const n = restorePick.choice.filter((x) => x === true).length;
+  document.getElementById("restoreApply").textContent = `Add ${n} task(s)`;
+}
+function closeRestorePicker(result) {
+  document.getElementById("restoreOverlay").classList.add("hidden");
+  const r = restorePick;
+  restorePick = null;
+  if (r) r.resolve(result);
+}
+async function applyRestorePick() {
+  const { cands, choice, source } = restorePick;
+  const picked = cands.filter((_, i) => choice[i] === true);
+  if (!picked.length) {
+    const st = document.getElementById("restoreStatus");
+    st.className = "status err";
+    st.textContent = "Tick ✓ on at least one task, or Cancel.";
+    return;
   }
-  await applyBackupData(obj); // popup.js — overwrite + refresh views
-  return { n };
+  const added = await mutate((d) => {
+    TTData.addRecoveryPoint(d, `before restoring from ${source}`);
+    const a = TTCore.applyRestore(d, d.days, picked);
+    TTData.log(d, [{ type: "restore", source, added: a.length, skipped: cands.length - picked.length },
+      ...a.map((x) => ({ type: "add", id: x.e.id, date: x.date, entry: TTCore.short(x.e), via: "restore" }))]);
+    return a.length;
+  });
+  closeRestorePicker({ added });
+  refreshDataViews();
+}
+function restoreMessage(res, source) {
+  if (res.error) return [res.error, "err"];
+  if (res.none) return [`Nothing missing — every task in ${source} is already here.`, "ok"];
+  if (res.cancelled) return ["Restore cancelled.", ""];
+  return [`Added ${res.added} task(s) back from ${source} ✓`, "ok"];
 }
 
 async function doImport() {
@@ -219,11 +289,52 @@ async function doImport() {
   let obj;
   try { obj = JSON.parse(document.getElementById("importBox").value); }
   catch { st.className = "status err"; st.textContent = "That's not valid JSON."; return; }
-  const res = await applyImport(obj);
-  if (res.error) { st.className = "status err"; st.textContent = res.error; return; }
-  if (res.cancelled) return;
-  document.getElementById("importBox").value = "";
-  st.className = "status ok"; st.textContent = `Imported ${res.n} day(s).`;
+  const res = await openRestorePicker(obj, "the pasted data");
+  const [msg, cls] = restoreMessage(res, "the pasted data");
+  st.className = "status" + (cls ? " " + cls : "");
+  st.textContent = msg;
+  if (res.added) document.getElementById("importBox").value = "";
+}
+
+// ---- Local recovery points + activity log ----
+function renderRecovery() {
+  const box = document.getElementById("recoveryList");
+  if (!box) return;
+  box.innerHTML = "";
+  const points = (S.recoveryPoints || []).slice().reverse();
+  if (!points.length) { box.innerHTML = '<p class="desc">None yet — one is saved automatically before anything removes tasks.</p>'; return; }
+  for (const p of points) {
+    const row = document.createElement("button");
+    row.className = "gdFile";
+    row.innerHTML = `<span class="gdName"></span><span class="gdWhen"></span>`;
+    row.querySelector(".gdName").textContent = `${p.reason} (${TTCore.counts(p.env).entries} tasks)`;
+    row.querySelector(".gdWhen").textContent = new Date(p.at).toLocaleString();
+    row.onclick = async () => {
+      const label = "the recovery point from " + new Date(p.at).toLocaleString();
+      const [msg, cls] = restoreMessage(await openRestorePicker(p.env, label), label);
+      const st = document.getElementById("recoveryStatus");
+      st.className = "status" + (cls ? " " + cls : "");
+      st.textContent = msg;
+    };
+    box.appendChild(row);
+  }
+}
+function logText(ev) {
+  const what = ev.entry || (ev.from ? `${ev.from} -> ${ev.to}` : "") || ev.reason || ev.detail || ev.status || ev.error || "";
+  const extra = ["added", "removed", "changed", "tombstoned", "entries"].filter((k) => ev[k] !== undefined).map((k) => `${k}=${ev[k]}`).join(" ");
+  return `${ev.t} [${ev.dev || "?"}] ${ev.type}${ev.date ? " " + ev.date : ""}${ev.source ? " (" + ev.source + ")" : ""} ${what}${ev.reason && ev.entry ? " — " + ev.reason : ""} ${extra}`.trim();
+}
+function renderActivityLog() {
+  const box = document.getElementById("activityLog");
+  if (!box) return;
+  const log = (S.ttLog || []).slice(-200).reverse();
+  box.textContent = log.length ? log.map(logText).join("\n") : "No activity recorded yet.";
+}
+async function copyActivityLog() {
+  const st = document.getElementById("recoveryStatus");
+  const text = JSON.stringify({ app: "team-timesheet", deviceId: S.deviceId, device: TTData.DEVICE_NAME, copiedAt: new Date().toISOString(), log: S.ttLog || [] }, null, 1);
+  try { await navigator.clipboard.writeText(text); st.className = "status ok"; st.textContent = "Activity log copied — paste it into the issue."; }
+  catch { st.className = "status err"; st.textContent = "Copy failed."; }
 }
 
 // ---- Google Drive backup/restore (gdrive.js provides the API calls) ----
@@ -280,7 +391,7 @@ async function gdDoRestore() {
     const token = await gdToken(true);
     const files = await gdListBackups(token);
     if (!files.length) { gdSetStatus("No backups found in Drive.", "err"); return; }
-    gdSetStatus(`${files.length} backup(s) — pick one to restore.`);
+    gdSetStatus(`${files.length} backup(s) — pick one to review what's missing.`);
     listEl.classList.remove("hidden");
     listEl.innerHTML = "";
     for (const f of files) {
@@ -291,14 +402,13 @@ async function gdDoRestore() {
       row.querySelector(".gdName").textContent = f.name;
       row.querySelector(".gdWhen").textContent = when;
       row.onclick = async () => {
-        gdSetStatus(`Restoring ${f.name}…`);
+        gdSetStatus(`Reading ${f.name}…`);
         try {
-          const text = await gdDownload(token, f.id);
-          const res = await applyImport(JSON.parse(text));
-          if (res.error) { gdSetStatus(res.error, "err"); return; }
-          if (res.cancelled) { gdSetStatus("Restore cancelled."); return; }
-          listEl.classList.add("hidden");
-          gdSetStatus(`Restored ${res.n} day(s) from ${f.name} ✓`, "ok");
+          const obj = TTCore.parseEnvelope(await gdDownload(token, f.id));
+          const res = await openRestorePicker(obj, f.name);
+          const [msg, cls] = restoreMessage(res, f.name);
+          if (res.added) listEl.classList.add("hidden");
+          gdSetStatus(msg, cls);
         } catch (e) { gdSetStatus(e.message || String(e), "err"); }
       };
       listEl.appendChild(row);
@@ -317,30 +427,32 @@ async function gdMaybeAutoBackup() {
 }
 
 async function resetEverything() {
-  const msg = "Delete all tasks, history, and settings? This cannot be undone. Your name is kept.";
+  const inp = document.getElementById("resetConfirmInput");
+  const st = document.getElementById("resetStatus");
+  //! The typed word is the guard against the misclick that once wiped every device; check it here,
+  //! not only via the button's disabled state.
+  if (!inp || inp.value.trim() !== "RESET") {
+    if (st) { st.className = "status err"; st.textContent = 'Type RESET in the box first.'; }
+    return;
+  }
+  const msg = "Delete all tasks, history, and settings on every synced device? Your name is kept, and a local recovery point is saved first.";
   if (!(await showConfirm(msg, "Yes, reset"))) return;
-  // Tombstone every entry that existed — otherwise a sync merge would just
-  // pull them all back in from Drive/another device right after.
-  S.deletedEntries = S.deletedEntries || {};
-  const now = Date.now();
-  for (const e of S.entries) S.deletedEntries[e.id] = now;
-  for (const list of Object.values(S.history)) for (const e of list) S.deletedEntries[e.id] = now;
-  S.entries = [];
-  S.history = {};
-  S.timer = { activeId: null, startedAt: null };
-  S.draft = null;
-  S.lastProject = null;
-  S.lastCategory = null;
-  S.dailyLimitHours = 8;
-  S.confirmBeforeDelete = true;
-  S.theme = "dark";
-  S.warnedDate = null;
-  await chrome.storage.local.set({
-    entries: [], history: {}, timer: S.timer, draft: null,
-    lastProject: null, lastCategory: null,
-    dailyLimitHours: 8, confirmBeforeDelete: true, theme: "dark", warnedDate: null,
-    deletedEntries: S.deletedEntries,
+  await mutate((d) => {
+    TTData.addRecoveryPoint(d, "before Reset Everything");
+    let n = 0;
+    //* Tombstones propagate the reset to other devices instead of them pulling everything back.
+    for (const list of Object.values(d.days)) for (const e of list) { TTCore.tombstone(d, e.id); n++; }
+    d.days = {};
+    d.timer = { activeId: null, startedAt: null };
+    Object.assign(d.set, {
+      draft: null, lastProject: null, lastCategory: null,
+      dailyLimitHours: 8, confirmBeforeDelete: true, theme: "dark", warnedDate: null,
+    });
+    TTData.log(d, [{ type: "reset", tombstoned: n }]);
   });
+  inp.value = "";
+  document.getElementById("resetEverything").disabled = true;
+  if (st) st.textContent = "";
   document.documentElement.dataset.theme = resolveTheme("dark");
   renderSettings();
   render();          // popup.js — refresh Today panel's entry list
@@ -379,6 +491,14 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("themeLight").onclick = () => applyTheme("light");
   document.getElementById("themeSystem").onclick = () => applyTheme("system");
   document.getElementById("resetEverything").onclick = resetEverything;
+  document.getElementById("resetConfirmInput").oninput = (e) => {
+    document.getElementById("resetEverything").disabled = e.target.value.trim() !== "RESET";
+  };
+  document.getElementById("restoreApply").onclick = applyRestorePick;
+  document.getElementById("restoreCancel").onclick = () => closeRestorePicker({ cancelled: true });
+  document.getElementById("restoreAllYes").onclick = () => { restorePick.choice = restorePick.choice.map(() => true); renderRestoreList(); };
+  document.getElementById("restoreAllNo").onclick = () => { restorePick.choice = restorePick.choice.map(() => false); renderRestoreList(); };
+  document.getElementById("copyLog").onclick = copyActivityLog;
   if (document.getElementById("copyExport")) document.getElementById("copyExport").onclick = copyExport;
   if (document.getElementById("doImport")) document.getElementById("doImport").onclick = doImport;
   if (document.getElementById("gdConnect")) {

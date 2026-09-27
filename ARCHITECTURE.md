@@ -8,21 +8,25 @@ MV3 extension. Popup for daily tracking + a full-page tab view
 | File | Role |
 |---|---|
 | `manifest.json` | MV3 manifest; permissions: storage, tabs, scripting; host perm for the Fillout origin. |
-| `popup.js` | **The whole app.** Timer engine, storage, views, add/edit, day navigation, and the cross-frame form automation. Loaded by both `popup.html` and `tab.html`. |
+| `sync-core.js` | Sync v2 core (`TTCore`): stamps, merge, restore, envelopes, activity-log events, all Drive calls. **Byte-identical copy** in `desktop/src/lib/sync-core.js` on the desktop branches — change both together. |
+| `data.js` | Data layer (`TTData`): `withData(fn)` = Web Lock `tt-data` + fresh `storage.get` + one `storage.set` of the changed keys. Rolls the day over, folds timers, keeps `ttLog` and `recoveryPoints`. Loaded by popup, tab and the service worker. |
+| `gdrive.js` | Token + HTTP transport for `TTCore.sync`; `gdCommitRemote` merges Drive into fresh local data under the lock. |
+| `popup.js` | Timer engine, views, add/edit, day navigation, and the cross-frame form automation. Every data change goes through `mutate(fn)` (→ `TTData.withData`). Loaded by both `popup.html` and `tab.html`. |
 | `popup.html` | Popup UI (setup view + main view). |
 | `tab.html` + `tab.js` | Full-page view: reuses popup.js's globals for the "Today" panel, adds Dashboard (stats) and Settings panels. `tab.js` must not redeclare `$`/`S`. |
-| `background.js` | Service worker: 1-minute alarm that checks the daily-limit and fires one OS notification per day (`warnedDate`). Reads `dailyLimitHours` from storage directly (separate realm). |
+| `background.js` | Service worker: 1-minute alarm that checks the daily-limit and fires one OS notification per day (`warnedDate`). Reads `dailyLimitHours` from storage directly (separate realm). Also writes the form tab's auto "submitted" mark (the form page can't take the data lock). |
 | `popup.css` / `tab.css` / `theme.css` | Styles + light/dark custom properties. |
 | `test/smoke.js` | jsdom-driven smoke suite (no framework). `npm test`. |
 | `test/fixtures/form.html` | Real captured form HTML (21 names) for `parseNames` tests. |
 | `test/fixtures/subform.html` | Real captured "Create entry" subform HTML (19 projects, 5 categories) for `loadProjectsAndCategories` tests. |
 
-## State (`S`, mirrors `chrome.storage.local`)
+## State (`S` = read-only cache of `chrome.storage.local`)
 
-`init()` loads everything, applies the **daily reset**: if `S.date !==
-todayStr()`, the outgoing day's `entries` are folded (running timer → accSec)
-and archived into `history[S.date]`, then `entries` cleared and `date`
-advanced. First-ever run (no prior `S.date`) skips archiving.
+Storage is the only source of truth. `S` is refreshed from `withData`'s
+result and from `storage.onChanged` (other windows, the worker, a sync), and
+is never written back wholesale. `TTData.toDoc` applies the **daily reset** on
+every change: if the stored `date` isn't today, the running timer is folded
+into its old-day entry and the live list moves under `history`.
 
 - `entries[]` — the live day (`S.date`). `history{date: entries[]}` — past days.
 - `timer{activeId, startedAt}` — one running timer at a time; `foldActive()`
@@ -34,8 +38,8 @@ advanced. First-ever run (no prior `S.date`) skips archiving.
 `viewDate` (module global) selects which day the main view shows.
 `isTodayView()` compares `viewDate === S.date` (NOT the wall clock, so it
 stays correct across a rollover). `currentEntries()` → `S.entries` for the
-live day, else `S.history[viewDate]`. `persistCurrent()` writes back to the
-right place. The add form has an hrs/min select pair (the desktop app's picker) for back-filling past days
+live day, else `S.history[viewDate]`. Writes go through `mutate(fn)` against
+`d.days[viewDate]`, so any day is written the same way. The add form has an hrs/min select pair (the desktop app's picker) for back-filling past days
 (which have no live timer, so their play button is hidden). Nav controls:
 `dayPrev/dayNext/viewDateInput/todayBtn`, clamped to `<= S.date`.
 
@@ -77,15 +81,39 @@ projects & categories" button (`loadProjectsAndCategories`) overwrites
 those over the `DEFAULT_PROJECTS`/`DEFAULT_CATEGORIES` fallback consts, which
 now exist only so the app has something to show before the first fetch.
 
-## Transfer
+## Sync v2 (issue #2)
 
-Settings (full view) → Backup & transfer: export = `{app,v,exportedAt,name,
-days}` from `buildDaysMap()`; import replaces `entries`/`history` from the
-same envelope. Same format the desktop app uses.
+- **Entries** carry `updatedAt`/`updatedBy` from a hybrid logical clock
+  (`TTCore.touch`); the newest version wins a merge. **Deletes** are
+  `deletedEntries{id: at}` (+ `deletedBy`); an entry is live only if updated
+  after its tombstone, so a restore (fresh stamp) beats an old delete.
+  **Unmark** is a stamped `{method:null}`. The merge is commutative,
+  associative and idempotent (fuzz-tested in harness 7).
+- **Drive**: each device writes only `device-<deviceId>.json` and reads every
+  device file (in every "Team Timesheet Backups" folder), so concurrent syncs
+  can't overwrite each other. `timesheet-latest.json` is still written as a
+  compatibility mirror for old clients; an old client writing it sets
+  `gdLegacyClientAt` (Settings warns). Dated snapshots carry a device suffix.
+- **Sync order**: lock `tt-sync` → network → `withData(gdCommitRemote)` merges
+  into *fresh* storage → write own device file → dashboard ingest. An edit
+  made mid-sync is in that fresh read, so it survives.
+- **Safety net**: a recovery point (`recoveryPoints`, last 10) before Reset,
+  a restore, or a sync that removes entries; `ttLog` (last 500 events) records
+  every add/edit/delete/sync with the source device. Settings → Recovery &
+  activity log lists both; "Copy activity log" for bug reports.
+
+## Transfer / restore
+
+Settings → Backup & transfer: export = the v2 envelope. Paste-import, Drive
+restore and recovery points all open the **restore picker**: only tasks
+missing now are listed, each ticked ✓ (add back) or ✗ (leave out); nothing
+present is removed or overwritten. Reset needs "RESET" typed.
 
 ## Tests
 
-`npm test` → `SMOKE: ALL PASS`. Harnesses cover: storage/daily-reset, timer
-fold/switch, hh:mm math, searchable combobox, delete-confirm, cross-frame
-automation against the real fixture, `parseNames`, colors, dashboard math,
-background alarm/notification.
+`npm test` → `SMOKE: ALL PASS` (exit 1 with "DID NOT FINISH" if a harness
+hangs). Harnesses cover: storage/daily-reset, timer fold/switch, hh:mm math,
+searchable combobox, delete-confirm, cross-frame automation against the real
+fixture, `parseNames`, colors, dashboard math, background alarm/notification,
+the sync core (7), two windows on one storage (8), and multi-device sync
+against an in-memory Drive (14) plus the restore picker (15).
