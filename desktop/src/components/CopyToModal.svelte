@@ -1,5 +1,6 @@
 <script>
   import { untrack } from "svelte";
+  import { isDayPick } from "../lib/time.js";
   // { minDate: "YYYY-MM-DD", onclose, onconfirm(targetDate) } — parent owns
   // the selected-entries set and does the actual copying.
   let { minDate, onclose, onconfirm } = $props();
@@ -7,6 +8,15 @@
   //! Seeded once on open, deliberately — untrack() keeps the compiler from reading it as a bug.
   let target = $state(untrack(() => minDate));
   let error = $state("");
+  let prev = untrack(() => minDate);
+  let byPointer = false;
+
+  //! WebKit (Linux/macOS) keeps its calendar open after a day is picked until the input loses focus.
+  function onchange(e) {
+    const v = e.currentTarget.value;
+    if (byPointer && isDayPick(prev, v)) e.currentTarget.blur();
+    prev = v;
+  }
 
   function confirm() {
     // Mirror the native <input min> guard here too, rather than trust it
@@ -28,7 +38,8 @@
   <div class="box">
     <h3 id="copy-to-title">Copy to</h3>
     <label for="copyDate">Target date</label>
-    <input id="copyDate" type="date" min={minDate} bind:value={target} />
+    <input id="copyDate" type="date" min={minDate} bind:value={target} {onchange}
+           onpointerdown={() => (byPointer = true)} onkeydown={() => (byPointer = false)} />
     {#if error}<p class="status-err">{error}</p>{/if}
     <div class="actions">
       <button class="btn" onclick={onclose}>Cancel</button>
