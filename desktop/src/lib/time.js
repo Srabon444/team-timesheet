@@ -61,3 +61,12 @@ export function longDate(dateStr) {
   const ML = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   return `${DOWL[d.getDay()]}, ${ML[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
+
+//* A picked day; month/year arrows keep the day (clamped to the month end), so they are not.
+export function isDayPick(prev, next) {
+  if (!prev || !next || prev === next) return false;
+  const [py, pm, pd] = prev.split("-").map(Number);
+  const [y, m, d] = next.split("-").map(Number);
+  if (y === py && m === pm) return true;
+  return d !== pd && !(d < pd && d === new Date(y, m, 0).getDate());
+}
