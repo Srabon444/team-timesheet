@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { secToHHMM, secToHHMMSS, hhmmToSec, stripDates, addDays } from "../src/lib/time.js";
+import { secToHHMM, secToHHMMSS, hhmmToSec, stripDates, addDays, isDayPick } from "../src/lib/time.js";
 import {
   dayTotal, trackedTotal, activeDayCount, dailyAverage, busiestDay,
   byProject, byCategory, mondayOf, weekDates, weekTotals,
@@ -46,6 +46,21 @@ describe("time conversions (extension parity)", () => {
   it("addDays crosses month boundaries", () => {
     expect(addDays("2026-07-01", -1)).toBe("2026-06-30");
     expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
+  });
+});
+
+describe("isDayPick (closes the WebKit date popover)", () => {
+  it("a new day is a pick, month/year arrows are not", () => {
+    expect(isDayPick("2026-09-27", "2026-09-15")).toBe(true); // day in the same month
+    expect(isDayPick("2026-09-27", "2026-10-02")).toBe(true); // greyed next-month cell
+    expect(isDayPick("2026-09-27", "2026-10-27")).toBe(false); // next-month arrow
+    expect(isDayPick("2026-09-27", "2027-09-27")).toBe(false); // next-year arrow
+    expect(isDayPick("2026-10-31", "2026-11-30")).toBe(false); // arrow clamped to the month end
+    expect(isDayPick("2026-01-31", "2026-02-28")).toBe(false);
+    expect(isDayPick("2026-10-31", "2026-11-29")).toBe(true);
+    expect(isDayPick("2026-09-27", "2026-09-27")).toBe(false);
+    expect(isDayPick("", "2026-09-27")).toBe(false);
+    expect(isDayPick("2026-09-27", "")).toBe(false);
   });
 });
 
