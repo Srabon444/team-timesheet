@@ -346,6 +346,14 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Closing "main" quits: the hidden "fillout" window would keep a windowless process alive that swallows every later launch via single-instance.
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Destroyed = event {
+                    dbg_log("main window destroyed: exiting");
+                    window.app_handle().exit(0);
+                }
+                return;
+            }
             // Hide instead of destroy so open_fillout() never needs to
             // build() this window again for the rest of the app's life.
             if window.label() != "fillout" {
