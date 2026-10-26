@@ -78,6 +78,7 @@ off `master`); only `desktop/` differs meaningfully between them.
 ```bash
 # Extension (root, master)
 npm test                       # node test/smoke.js (jsdom, must print "SMOKE: ALL PASS")
+npm run pack                   # Chrome Web Store zip → ../timesheet-extension-v<ver>.zip (see docs/store-listing.md)
 
 # Desktop (desktop/ on desktop-* branches)
 cd desktop

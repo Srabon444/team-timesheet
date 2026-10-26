@@ -95,7 +95,7 @@ now exist only so the app has something to show before the first fetch.
   compatibility mirror for old clients; an old client writing it sets
   `gdLegacyClientAt` (Settings warns). Dated snapshots carry a device suffix.
 - **Sync order**: lock `tt-sync` → network → `withData(gdCommitRemote)` merges
-  into *fresh* storage → write own device file → dashboard ingest. An edit
+  into *fresh* storage → write own device file. An edit
   made mid-sync is in that fresh read, so it survives.
 - **Safety net**: a recovery point (`recoveryPoints`, last 10) before Reset,
   a restore, or a sync that removes entries; `ttLog` (last 500 events) records

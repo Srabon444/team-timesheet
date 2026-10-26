@@ -10,9 +10,6 @@ const SUBFORM_URL = "https://techzu.fillout.com/t/kwgd21pozYus";
 // S.projects/S.categories from storage take over — see currentProjects()).
 const DEFAULT_PROJECTS = ["Bookland ERP", "Builder Alliance", "Dr Cool", "Hydroflux", "NewERP",
   "Prowork", "Rina CRM", "SME Taskhub", "VSB", "Worksite Mini ERP", "ZuPOS"];
-// Deployed in the timesheet-dashboard project (https://github.com/Srabon444/timesheet-dashboard).
-const INGEST_URL = "https://timesheet-dashboard-seven.vercel.app/api/ingest";
-const DASHBOARD_URL = "https://timesheet-dashboard-seven.vercel.app/";
 const DEFAULT_CATEGORIES = ["Meeting (General)", "Meeting (Technical)", "Development",
   "Code Review", "Miscellaneous"];
 function currentProjects() { return (S.projects && S.projects.length) ? S.projects : DEFAULT_PROJECTS; }
@@ -48,48 +45,6 @@ const PROJECT_COLORS = {
 const PROJECT_FALLBACK_COLOR = "#64748b"; // any project not in the map above
 function projectColor(project) {
   return PROJECT_COLORS[project] || PROJECT_FALLBACK_COLOR;
-}
-
-// entriesOverride (already {id,project,category,description,seconds} shaped)
-// lets gdSync's bulk-push pass in a cross-device day's merged entries;
-// without it, entries come from this device's own live state as before.
-async function pushIngest(date, method, entriesOverride) {
-  if (typeof gdToken !== "function") return; // gdrive.js not loaded (e.g. tests)
-  if (typeof gdConnected === "function" && !(await gdConnected())) return; // Drive-backup users only
-  let token;
-  try { token = await gdToken(false); } catch (e) { console.warn("pushIngest: not signed in to Google", date, e); return; }
-  //! elapsedSec, not raw accSec — a running timer isn't folded in yet, so raw reads the entry at
-  //! its pre-start value. buildDaysMap() folds, which is why the two paths used to disagree.
-  const entries = entriesOverride || (date === S.date ? S.entries : (S.history[date] || [])).map((e) => ({
-    id: e.id, project: e.project, category: e.category,
-    description: e.description, seconds: Math.round(elapsedSec(e)),
-  }));
-  if (!entries.length) return;
-  try {
-    const res = await fetch(INGEST_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ googleAccessToken: token, name: S.name, date, method, entries }),
-    });
-    if (!res.ok) console.error("pushIngest: rejected", date, res.status, await res.text().catch(() => ""));
-  } catch (e) { console.error("pushIngest: network error", date, e); }
-}
-
-// Retract a day from the dashboard. Sent as its own method rather than an empty-entries ingest so
-// the server can delete the day outright instead of upserting an empty one.
-async function pushUnmark(date) {
-  if (typeof gdToken !== "function") return; // gdrive.js not loaded (e.g. tests)
-  if (typeof gdConnected === "function" && !(await gdConnected())) return;
-  let token;
-  try { token = await gdToken(false); } catch (e) { console.warn("pushUnmark: not signed in to Google", date, e); return; }
-  try {
-    const res = await fetch(INGEST_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ googleAccessToken: token, name: S.name, date, method: "unmark", entries: [] }),
-    });
-    if (!res.ok) console.error("pushUnmark: rejected", date, res.status, await res.text().catch(() => ""));
-  } catch (e) { console.error("pushUnmark: network error", date, e); }
 }
 
 var S = {}; // { name, names, date, lastCategory, entries[], timer:{activeId,startedAt} }
@@ -1513,8 +1468,6 @@ document.addEventListener("DOMContentLoaded", () => {
   if ($("todayBtn")) $("todayBtn").onclick = () => setViewDate(S.date);
   if ($("viewDateInput")) $("viewDateInput").onchange = (e) => setViewDate(e.target.value);
   $("finalSubmit").onclick = finalSubmit;
-  //* Present in both popup.html and tab.html, so one binding covers both views.
-  if ($("openDashboard")) $("openDashboard").onclick = () => chrome.tabs.create({ url: DASHBOARD_URL });
   if ($("prayerBtn")) {
     $("prayerBtn").onclick = openPrayerSettings;
     $("prayerCheck").onclick = prayerDoCheck;
@@ -1543,16 +1496,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (typeof renderTimesheet === "function") renderTimesheet();
       }
       if (changes.submittedDays) {
-        const oldVal = changes.submittedDays.oldValue || {};
-        const newVal = changes.submittedDays.newValue || {};
         updateSubmittedUI();
-        for (const [date, info] of Object.entries(newVal)) {
-          if (TTCore.isMarked(info)) {
-            if (!TTCore.isMarked(oldVal[date]) || oldVal[date].at !== info.at) pushIngest(date, info.method);
-          } else if (TTCore.isMarked(oldVal[date])) {
-            pushUnmark(date);
-          }
-        }
       }
       // Push local edits to Drive shortly after any data change. A pull writes
       // the same keys, but gdSync merges rather than blindly overwriting, so
