@@ -10,7 +10,11 @@ Bump `version` in manifest.json for every re-upload.
 - **Category:** Productivity
 - **Language:** English
 - **Icon:** `icons/icon128.png`
-- **Screenshot:** `docs/store/screenshot-1-autofill-1280x800.png`
+- **Screenshots (upload in this order, 1280×800, demo data only):**
+  1. `docs/store/screenshot-1-today-1280x800.png`
+  2. `docs/store/screenshot-2-timesheet-1280x800.png`
+  3. `docs/store/screenshot-3-dashboard-1280x800.png`
+  4. `docs/store/screenshot-4-drive-backup-1280x800.png`
 - **Small promo tile:** `docs/store/promo-tile-440x280.png`
 - **Privacy policy URL:** `https://srabon444.github.io/team-timesheet/` (served from the `gh-pages` branch; edit `docs/privacy-policy.md` and mirror the change into `gh-pages/index.html`)
 
