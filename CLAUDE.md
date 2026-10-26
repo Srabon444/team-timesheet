@@ -93,6 +93,9 @@ npm run tauri build            # installers
 
 - Match surrounding style; comments explain *why* (esp. the automation
   gotchas above — don't "simplify" them away).
+- **Web Store**: upload only the zip from `npm run pack` (it strips the manifest `key`, which the
+  store rejects); bump `version` per upload. The privacy policy lives in `docs/privacy-policy.md`
+  and is mirrored in `gh-pages/index.html` (served at srabon444.github.io/team-timesheet/).
 - No AI co-author trailer in commits/PRs.
 - Keep `desktop/README.md` short and copy-pasteable.
 - Update this file + the relevant ARCHITECTURE.md whenever structure changes.
