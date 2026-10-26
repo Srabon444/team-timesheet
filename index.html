@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Daily Timesheet Auto-Filler</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 system-ui, sans-serif; max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #8884; padding: 8px 10px; text-align: left; vertical-align: top; }
+  code { background: #8882; padding: 1px 5px; border-radius: 4px; }
+  .muted { opacity: .7; }
+</style>
+</head>
+<body>
+<h1>Privacy Policy — Daily Timesheet Auto-Filler</h1>
+<p class="muted">Last updated: 2026-10-26</p>
+
+<p>Daily Timesheet Auto-Filler ("the extension") is a Chrome extension that tracks
+time per project and fills your team's Fillout timesheet form. It is unofficial
+and not affiliated with Fillout.</p>
+
+<h2>Data the extension handles</h2>
+<table>
+<tr><th>Data</th><th>Where it lives</th><th>Why</th></tr>
+<tr><td>Your name (as picked on the timesheet form), timer entries (project, category, description, time), settings, activity log</td><td><code>chrome.storage.local</code> on your device</td><td>The core timesheet feature</td></tr>
+<tr><td>City, country and calculation settings for prayer reminders (only if you turn the feature on)</td><td><code>chrome.storage.local</code></td><td>Prayer-time reminders</td></tr>
+<tr><td>Your Google account's access token (only if you click Connect)</td><td>Managed by Chrome (<code>chrome.identity</code>); never stored by the extension's own code, never sent anywhere except Google</td><td>Optional Google Drive backup/sync</td></tr>
+</table>
+<p>The extension has no server of its own. The developer never receives your data.</p>
+
+<h2>Network requests</h2>
+<ul>
+<li><strong>techzu.fillout.com</strong> — the extension reads the form's name/project/category
+  lists and fills the form you have open. Your entries go to the form only when
+  you start the fill, and you review the form before its final Submit.</li>
+<li><strong>Google Drive API</strong> (<code>googleapis.com</code>, <code>oauth2.googleapis.com</code>) — only after
+  you click Connect. The extension requests the <code>drive.file</code> scope, which lets
+  it see <strong>only the files it creates itself</strong> in your Drive, never your other
+  files. It writes your timesheet data there as backup/sync files. "Disconnect"
+  revokes the token.</li>
+<li><strong>api.aladhan.com</strong> — only if you enable prayer reminders. The city, country
+  and calculation-method values you entered are sent to fetch prayer times.</li>
+</ul>
+<p>No analytics, tracking, advertising or telemetry. No data is sold or shared with
+third parties, and none is used for creditworthiness, lending or any purpose
+unrelated to the features above. The extension does not load or run remote code.</p>
+
+<h2>Your control</h2>
+<ul>
+<li>Delete all local data by removing the extension or using Reset in Settings.</li>
+<li>Delete Drive backups by deleting the extension's files in your Google Drive,
+  and revoke access at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+</ul>
+
+<h2>Use of Google user data</h2>
+<p>The extension's use and transfer of information received from Google APIs
+adheres to the
+<a href="https://developer.chrome.com/docs/webstore/program-policies/user-data-faq">Chrome Web Store User Data Policy</a>,
+including the Limited Use requirements.</p>
+
+<h2>Contact</h2>
+<p>Questions or deletion requests: open an issue at
+<a href="https://github.com/Srabon444/team-timesheet/issues">github.com/Srabon444/team-timesheet/issues</a>.</p>
+</body>
+</html>
