@@ -117,26 +117,8 @@ async function gdSync(interactive) {
       throw e;
     }
     if (r.pushed || r.pulled) await io.log([{ type: "sync", status: r.status }]);
-    await gdIngestSubmitted();
     return r.status;
   });
-}
-
-// Dashboard ingest for every day marked submitted, from the post-merge data — so a day submitted
-// on ANOTHER device (pulled in by this sync) is pushed too.
-async function gdIngestSubmitted() {
-  if (typeof pushIngest !== "function") return;
-  const st = await chrome.storage.local.get(["entries", "history", "date", "submittedDays"]);
-  const days = { ...(st.history || {}), [st.date]: st.entries || [] };
-  for (const [date, info] of Object.entries(st.submittedDays || {})) {
-    if (!TTCore.isMarked(info)) continue;
-    const list = days[date] || [];
-    if (!list.length) continue;
-    const entries = list.map((e) => ({
-      id: e.id, project: e.project, category: e.category, description: e.description, seconds: Math.round(e.accSec || 0),
-    }));
-    await pushIngest(date, info.method, entries).catch((e) => console.error("pushIngest failed for", date, e));
-  }
 }
 
 // Dated snapshot of this device's post-sync state. Returns true if written, false if skipped

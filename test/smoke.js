@@ -1381,13 +1381,6 @@ async function harness9() {
   const merged = win.TTCore.merge([{ submittedDays: drive }, { submittedDays: store.submittedDays }]);
   A(!win.TTCore.isMarked(merged.submittedDays[DAY]), "a Drive copy that still has the day marked cannot resurrect it");
 
-  // Same branch the storage listener takes for the dashboard push.
-  const seen = [];
-  for (const [date, info] of Object.entries(store.submittedDays)) {
-    if (win.TTCore.isMarked(info)) seen.push(["ingest", date]);
-    else if (win.TTCore.isMarked(drive[date])) seen.push(["unmark", date]);
-  }
-  A(seen.length === 1 && seen[0][0] === "unmark", "a tombstoned day pushes an unmark, not an ingest");
   dom.window.close();
 }
 
@@ -1790,7 +1783,6 @@ function makeDataContext(store, locks, htmlSrc) {
   }
   // Stub AFTER the scripts evaluate — gdrive.js's own declarations would clobber earlier stubs.
   win.gdToken = async () => "faketoken";
-  win.pushIngest = async () => {};
   win.S = { entries: [], history: {}, timer: { activeId: null, startedAt: null }, submittedDays: {}, deletedEntries: {} };
   win.viewDate = win.todayStr();
   return win;
@@ -2130,7 +2122,9 @@ async function harness15() {
 // ============================================================
 async function harness16() {
   console.log("\n== Harness 16: service-worker submitted mark ==");
-  const store = { date: "2026-09-27", entries: [{ id: "e1", project: "P", category: "C", description: "d", accSec: 60 }], history: {}, submittedDays: {} };
+  //! Live day must be the real today — a fixed date rolls over into history and the entry check below fails.
+  const now = new Date(), p2 = (n) => String(n).padStart(2, "0");
+  const store = { date: `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`, entries: [{ id: "e1", project: "P", category: "C", description: "d", accSec: 60 }], history: {}, submittedDays: {} };
   let onMessage = null;
   const noop = () => {};
   const chromeMock = {
