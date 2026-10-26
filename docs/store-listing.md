@@ -7,7 +7,7 @@ Bump `version` in manifest.json for every re-upload.
 
 - **Name:** Daily Timesheet Auto-Filler
 - **Summary (≤132):** Per-project timers that auto-fill your team's Fillout daily timesheet form. Optional Google Drive backup. Unofficial.
-- **Category:** Productivity
+- **Category:** Productivity → Workflow & Planning
 - **Language:** English
 - **Icon:** `icons/icon128.png`
 - **Screenshots (upload in this order, 1280×800, demo data only):**
