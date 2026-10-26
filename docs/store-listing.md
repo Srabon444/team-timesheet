@@ -75,7 +75,7 @@ Auto-fill needs the form open; the form is public, so no login is required.
 ## Before submitting — one-time checklist (owner only)
 
 1. Developer account registered ($5).
-2. Upload zip as a draft → Package tab → compare the Item ID with the unpacked extension's ID. If they differ, copy "View public key" into manifest `key`, and set that ID as the Application ID of the OAuth client in Google Cloud.
+2. The store rejects `key` in the manifest, so `npm run pack` strips it from the zip (the repo manifest keeps it for dev). After the first upload: Package tab → "View public key" → paste it (one line) into the repo manifest `key`, and set the Item ID as the Application ID of the OAuth client in Google Cloud. Dev and store builds then share one ID and one `client_id`.
 3. Google Cloud → OAuth consent screen: publish to **In production**, add the privacy-policy URL (same as above), scopes `drive.file` only.
 4. Manual check on an unpacked build: Open full view twice (second click should focus the existing tab, not open a new one; confirms `tabs` permission is not needed).
 5. Submit for review.

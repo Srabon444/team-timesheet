@@ -740,7 +740,7 @@ async function submitDraft() {
 // no DOM scrape. Name lives on the main form; Project/Category live on the
 // "Create entry" subform (SUBFORM_URL).
 function parseDropdownOptions(html, fieldName) {
-  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (!m) return [];
   let data;
   try { data = JSON.parse(m[1]); } catch { return []; }
