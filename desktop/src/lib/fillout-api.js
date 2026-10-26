@@ -42,7 +42,7 @@ function randToken(n = 32) {
 // Walk __NEXT_DATA__ for a widget by its display name and return
 // { optionValue: optionId } from its static dropdown options.
 function parseOptionMap(html, widgetName) {
-  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (!m) return {};
   let data;
   try { data = JSON.parse(m[1]); } catch { return {}; }

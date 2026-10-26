@@ -2,7 +2,7 @@
 // options are static, embedded in the server-rendered __NEXT_DATA__ JSON.
 // Parse them out of the raw HTML — no browser, no DOM scraping.
 export function parseDropdownOptions(html, fieldName) {
-  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (!m) return [];
   let data;
   try {
