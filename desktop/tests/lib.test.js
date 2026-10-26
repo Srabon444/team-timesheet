@@ -212,6 +212,12 @@ describe("parseNames (against the real captured form HTML)", () => {
     expect(names).toContain("Md Ashraful Islam");
     expect([...names].sort((a, b) => a.localeCompare(b))).toEqual(names);
   });
+  it("still parses when Fillout adds attributes to the data tag", () => {
+    const html = fs.readFileSync(path.join(__dirname, "..", "..", "test", "fixtures", "form.html"), "utf8");
+    const withAttr = html.replace('<script id="__NEXT_DATA__" type="application/json">', '<script id="__NEXT_DATA__" type="application/json" crossorigin="anonymous">');
+    expect(withAttr).not.toBe(html);
+    expect(parseNames(withAttr)).toEqual(parseNames(html));
+  });
   it("returns [] on junk input", () => {
     expect(parseNames("<html></html>")).toEqual([]);
     expect(parseNames("")).toEqual([]);
