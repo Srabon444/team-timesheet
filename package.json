@@ -2,9 +2,10 @@
   "name": "team-timesheet-extension",
   "version": "1.0.0",
   "private": true,
-  "description": "Team Timesheet — Chrome extension",
+  "description": "Team Timesheet \u2014 Chrome extension",
   "scripts": {
-    "test": "node test/smoke.js"
+    "test": "node test/smoke.js",
+    "pack": "bash scripts/pack.sh"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"
