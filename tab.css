@@ -72,7 +72,7 @@ body { width: auto; max-width: none; } /* popup.css sets a 340px popup width; a 
 .content .entry .desc { font-size: 13px; }
 .content .entry .timepick select { padding: 7px 26px 7px 10px; font-size: 13px; }
 .content .entry .tbtn { width: 38px; height: 36px; font-size: 15px; }
-.content .entry .edit, .content .entry .del { width: 34px; height: 34px; font-size: 15px; }
+.content .entry .dup, .content .entry .edit, .content .entry .del { width: 34px; height: 34px; font-size: 15px; }
 .content .entry .del { font-size: 18px; }
 .content .entry .live { font-size: 14px; min-width: 80px; }
 .content .statusDot { width: 10px; height: 10px; }

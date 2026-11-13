@@ -2145,6 +2145,71 @@ async function harness16() {
   A(Object.keys(store.submittedDays).length === 0, "junk or unknown messages write nothing");
   onMessage({ tt: "markSubmitted", date: "2026-09-26", method: "auto" });
   await sleep(30);
+// ============================================================
+// HARNESS 17 — edit/duplicate load the task into the add form, today and past days
+// ============================================================
+async function harness17() {
+  console.log("\n== Harness 17: edit + duplicate prefill ==");
+  const p2 = (n) => String(n).padStart(2, "0");
+  const ds = (t) => `${t.getFullYear()}-${p2(t.getMonth() + 1)}-${p2(t.getDate())}`;
+  const today = ds(new Date()), yest = ds(new Date(Date.now() - 864e5));
+  const store = {
+    name: "X", date: today, deviceId: "dev", timer: { activeId: null, startedAt: null },
+    entries: [{ id: "t1", project: "Hydroflux", category: "Development", description: "today task", accSec: 5400, updatedAt: 1 }],
+    history: { [yest]: [{ id: "y1", project: "VSB", category: "Retired Category", description: "yest task", accSec: 3600, updatedAt: 1 }] },
+  };
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = {
+    storage: { local: { get: async (k) => (k === null ? JSON.parse(JSON.stringify(store)) : {}), set: async (o) => { Object.assign(store, o); } } },
+    tabs: { query: async () => [] },
+  };
+  win.matchMedia = () => ({ matches: false });
+  win.fetch = async () => ({ text: async () => "" });
+  win.crypto = { randomUUID: () => "new-" + Math.random() };
+  const sc = win.document.createElement("script");
+  sc.textContent = jsSrc;
+  win.document.body.appendChild(sc);
+  win.document.dispatchEvent(new win.Event("DOMContentLoaded"));
+  await sleep(80);
+  const $ = (id) => win.document.getElementById(id);
+  const form = () => ({ proj: $("projSelect").value, cat: $("catSelect").value, desc: $("descInput").value, time: win.formTimeStr(), btn: $("addProject").textContent });
+
+  win.document.querySelector(".entry .edit").click();
+  await sleep(20);
+  let f = form();
+  A(f.desc === "today task" && f.proj === "Hydroflux" && f.cat === "Development" && f.time === "01:30" && f.btn === "Save changes", "edit fills the form with today's task");
+  //! The live category list arriving after the form is filled must not reset the picked category.
+  win.fillSelect($("catSelect"), ["Meeting (General)", "Development"]);
+  A($("catSelect").value === "Development", "a category list refresh keeps the category being edited");
+  $("cancelEdit").click();
+  await sleep(10);
+
+  win.setViewDate(yest);
+  await sleep(20);
+  win.document.querySelector(".entry .edit").click();
+  await sleep(20);
+  f = form();
+  A(f.desc === "yest task" && f.proj === "VSB" && f.time === "01:00" && f.btn === "Save changes", "edit fills the form with a past day's task (was blank)");
+  A(f.cat === "Retired Category", "a category no longer in the live list still shows, not a different one");
+  $("descInput").value = "yest task edited";
+  $("addProject").click();
+  await sleep(30);
+  A(store.history[yest][0].description === "yest task edited" && store.history[yest][0].category === "Retired Category", "saving a past day's edit updates that task, category intact");
+  A(store.history[yest].length === 1, "the edit did not add a second task");
+
+  win.document.querySelector(".entry .dup").click();
+  await sleep(20);
+  f = form();
+  A(f.desc === "yest task edited" && f.proj === "VSB" && f.time === "00:00" && f.btn === "+ Add Project", "duplicate fills the form as a new task with time 00:00");
+  win.setPickTime ? win.setPickTime($("timePick"), 1800) : null;
+  $("addProject").click();
+  await sleep(30);
+  A(store.history[yest].length === 2 && store.history[yest][1].id !== store.history[yest][0].id, "duplicate adds a new task to the same day");
+  A(store.history[yest][1].accSec === 1800 && store.history[yest][0].accSec === 3600, "the copy has its own time; the original is untouched");
+  dom.window.close();
+}
+
   const info = store.submittedDays["2026-09-26"];
   A(info && info.method === "auto" && info.at > 0 && info.by === store.deviceId, "a real mark is stamped by this device");
   A((store.ttLog || []).some((e) => e.type === "mark-submitted" && e.via === "form tab"), "the mark is in the activity log");
@@ -2176,3 +2241,4 @@ process.on("exit", () => { if (!finished) { console.error("\nSMOKE: DID NOT FINI
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);
 })();
+  await harness17();

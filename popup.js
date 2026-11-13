@@ -406,11 +406,12 @@ function setViewDate(dateStr) {
 // Reflect S.draft into the add-form (survives popup close / tab switch).
 // draft = { project, category, description, editingId }
 function refreshAddForm() {
-  // drop a stale edit target that was deleted
-  if (S.draft && S.draft.editingId && !S.entries.some((e) => e.id === S.draft.editingId)) S.draft = null;
+  //! Drop a stale edit target that was deleted. Looked up in the day on screen: checking only
+  //! today's list used to throw away every edit of a past day's task, so the form never filled.
+  if (S.draft && S.draft.editingId && !currentEntries().some((e) => e.id === S.draft.editingId)) S.draft = null;
   const d = S.draft;
   $("projSelect").value = (d && d.project) || S.lastProject || currentProjects()[0];
-  $("catSelect").value = (d && d.category) || S.lastCategory || currentCategories()[0];
+  fillSelect($("catSelect"), currentCategories(), (d && d.category) || S.lastCategory || currentCategories()[0]);
   $("descInput").value = (d && d.description) || "";
   setFormTime((d && d.time) || "00:00");
   const editing = !!(d && d.editingId);
@@ -427,12 +428,13 @@ function saveDraft() {
   };
   chrome.storage.local.set({ draft: S.draft });
 }
-function startEdit(id) {
+//* duplicate=true loads the task as a NEW one (time 00:00) instead of editing it in place.
+function startEdit(id, duplicate) {
   const e = currentEntries().find((x) => x.id === id);
   if (!e) return;
   S.draft = {
     project: e.project, category: e.category, description: e.description,
-    time: secToHHMM(elapsedSec(e)), editingId: id,
+    time: duplicate ? "00:00" : secToHHMM(elapsedSec(e)), editingId: duplicate ? null : id,
   };
   chrome.storage.local.set({ draft: S.draft });
   refreshAddForm();
@@ -457,6 +459,7 @@ function showDialog(message, yesLabel) {
     $("confirmYes").textContent = yesLabel;
     $("confirmOverlay").classList.remove("hidden");
     const done = (result) => {
+  if (value) sel.value = value;
       $("confirmOverlay").classList.add("hidden");
       $("confirmYes").onclick = null;
       $("confirmNo").onclick = null;
@@ -466,9 +469,12 @@ function showDialog(message, yesLabel) {
     $("confirmNo").onclick = () => done("cancel");
   });
 }
-function fillSelect(sel, items) {
+//! Rebuilding the options resets a select to its first one. The live category fetch on every open
+//! does that after the form is filled, so an edit silently saved the wrong category. Keep the
+//! value, and keep it as an option even when the live list no longer has it (an older task).
+function fillSelect(sel, items, value = sel.value) {
   sel.innerHTML = "";
-  for (const it of items) {
+  for (const it of value && !items.includes(value) ? [...items, value] : items) {
     const o = document.createElement("option");
     o.value = it;
     o.textContent = it;
@@ -542,6 +548,7 @@ function updateDayTotal() {
 function render() {
   const box = $("entries");
   box.innerHTML = "";
+          <button class="dup" title="Duplicate">⧉</button>
   const list = currentEntries();
   const todayView = isTodayView();
   $("emptyMsg").classList.toggle("hidden", list.length > 0);
@@ -563,6 +570,7 @@ function render() {
         </div>
         <div class="acts">
           <button class="edit" title="Edit">✎</button>
+    div.querySelector(".dup").onclick = () => startEdit(e.id, true);
           <button class="del" title="Delete">&times;</button>
         </div>
       </div>
