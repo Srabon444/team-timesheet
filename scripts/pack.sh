@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 v=$(node -p "require('./manifest.json').version")
 out="$(cd .. && pwd)/timesheet-extension-v$v.zip"
-files="manifest.json background.js data.js gdrive.js sync-core.js prayer.js prayer-hadiths.js popup.html popup.js popup.css tab.html tab.js tab.css theme.css icons/icon128.png"
+files="manifest.json background.js data.js gdrive.js sync-core.js prayer.js prayer-hadiths.js fill.js popup.html popup.js popup.css tab.html tab.js tab.css theme.css icons/icon128.png"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 cp --parents $files "$tmp"
