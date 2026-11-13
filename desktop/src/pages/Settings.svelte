@@ -87,7 +87,7 @@
   }
   async function copyLog() {
     const text = JSON.stringify({ app: "team-timesheet", deviceId: app.data.deviceId, device: deviceName(), copiedAt: new Date().toISOString(), log: [...log].reverse() }, null, 1);
-    try { await navigator.clipboard.writeText(text); recMsg = "Activity log copied — paste it into the issue."; }
+    try { await navigator.clipboard.writeText(text); flashCopied("log"); recMsg = "Activity log copied — paste it into the issue."; }
     catch { recMsg = "Copy failed."; }
   }
   const legacySeen = $derived(!!app.data.gdLegacyClientAt && Date.now() - app.data.gdLegacyClientAt < 14 * 864e5);
@@ -95,10 +95,19 @@
   let importText = $state("");
   let ioMsg = $state("");
 
+  //* The button itself says "✓ Copied" for 2s, then goes back to its label.
+  let copied = $state("");
+  let copiedTimer;
+  function flashCopied(which) {
+    copied = which;
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copied = ""), 2000);
+  }
   async function copyExport() {
     try {
       await navigator.clipboard.writeText(exportText);
-      ioMsg = "Copied to clipboard.";
+      ioMsg = "";
+      flashCopied("export");
     } catch {
       ioMsg = "Copy failed — select the text above and copy manually.";
     }
@@ -257,7 +266,7 @@
 
   <div class="setlbl">Export</div>
   <textarea class="io" readonly rows="4" value={exportText}></textarea>
-  <button class="btn" onclick={copyExport}>Copy to clipboard</button>
+  <button class="btn" onclick={copyExport}>{copied === "export" ? "✓ Copied" : "Copy to clipboard"}</button>
 
   <div class="setlbl mt">Import</div>
   <textarea class="io" rows="4" bind:value={importText} placeholder="Paste exported data here…"></textarea>
@@ -337,7 +346,7 @@
     <p class="muted small">No recovery points yet.</p>
   {/if}
   <pre class="io log">{log.length ? log.slice(0, 200).map(logText).join("\n") : "No activity recorded yet."}</pre>
-  <button class="btn" onclick={copyLog}>Copy activity log</button>
+  <button class="btn" onclick={copyLog}>{copied === "log" ? "✓ Copied" : "Copy activity log"}</button>
   {#if recMsg}<p class="muted small">{recMsg}</p>{/if}
 </section>
 
