@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Daily Timesheet Auto-Filler",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Per-project timers that auto-fill your team's Fillout daily timesheet form. Optional Google Drive backup. Unofficial.",
   "permissions": [
     "storage",

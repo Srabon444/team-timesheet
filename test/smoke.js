@@ -6,7 +6,7 @@ const ROOT = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(ROOT, "popup.html"), "utf8");
 //* popup.html loads sync-core.js + data.js ahead of popup.js; every harness that injects "popup.js"
 //* gets the same stack.
-const jsSrc = ["sync-core.js", "data.js", "popup.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
+const jsSrc = ["sync-core.js", "data.js", "fill.js", "popup.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let fails = 0;
@@ -45,6 +45,9 @@ async function harness1() {
       },
     },
     scripting: { executeScript: async () => [{ result: {} }] }, // fillFormOnPage is stubbed below; harness2 covers real cross-frame automation
+    // Final Submit hands the run to the service worker; here fill.js startFill runs in the same
+    // window and is awaited, so the assertions below see the finished run.
+    runtime: { sendMessage: async (msg) => (msg && msg.tt === "fill" ? win.startFill(msg.job) : undefined) },
   };
 
   const realForm = fs.readFileSync(path.join(ROOT, "test", "fixtures", "form.html"), "utf8");
@@ -286,6 +289,16 @@ async function harness1() {
   await sleep(300);
   A(Array.isArray(lastFill) && lastFill.length === 2, "Final Submit again with nothing changed re-sends both entries (full resync, not skipped)");
   A(gdBackupCalls === 1, "the resync still triggers a dated Drive backup");
+
+  // A second Final Submit while a run is still going must not start another run on the same tab.
+  {
+    const job = { date: win.S.date, name: win.S.name, entries: [{ id: store.entries[0].id, project: "P", category: "C", description: "d", hhmm: "00:01" }] };
+    const first = win.startFill(job);
+    const second = await win.startFill(job);
+    await first;
+    A(second && second.busy === true, "a second fill while one is running is refused (busy)");
+    A(store.fillStatus && store.fillStatus.running === false && /added/.test(store.fillStatus.text), "the finished run's result is in storage for any window to show");
+  }
 
   // Add ONE new entry -> the NEXT Final Submit must resend ALL THREE (full
   // resync), not just the new one. Also re-verifies ensureFormTab now
@@ -632,6 +645,7 @@ async function harness2() {
   const filled = [];      // entries the mock subform Submit actually received
   let mainSubmitClicked = false;
   let createClicks = 0;
+  let keepOpen = false;
 
   function buildSubWindow() {
     const d = new JSDOM(`<body></body>`, { runScripts: "dangerously" });
@@ -650,6 +664,7 @@ async function harness2() {
         time: time.value,
       });
       const descText = desc.value;
+      if (keepOpen) return; // a validation message: Fillout keeps the modal open, nothing saved
       subWin = null; // subform closes -> back to main list, matches real Fillout behavior
       // Mirrors the real Fillout race confirmed live: the entries list does its
       // own async refresh after the modal closes, so the new entry's text only
@@ -784,6 +799,17 @@ async function harness2() {
   A(clearRes.result && clearRes.result.before === 2, "pageClearExistingEntries counts existing rows before clearing");
   A(clearRes.result && clearRes.result.after === 0, "pageClearExistingEntries removes every existing row via its Edit control's sibling delete button");
   A(topWin.document.querySelectorAll("div.entryRowMarker").length === 0, "both entry rows are gone from the DOM (deleted, not just visually hidden)");
+
+  // A modal that never closes means the entry did not save: the run must stop there, not fill
+  // the next entry into the same modal and count both as added.
+  keepOpen = true;
+  filled.length = 0;
+  createClicks = 0;
+  const stuck = await shell.fillFormOnPage(1, entries, "Debjit Paul", "2026-07-20");
+  A(stuck.error && /did not save/.test(stuck.error) && stuck.added === 0, "a modal left open stops the run with 0 added");
+  A(createClicks === 1 && filled.length === 1, "the next entry is never filled into the still-open modal");
+  keepOpen = false;
+  subWin = null;
 
   topDom.window.close();
   shellDom.window.close();
@@ -2120,24 +2146,90 @@ async function harness15() {
 // HARNESS 16 — the service worker records the form tab's "submitted" mark
 // (the Fillout page can't take the data lock) and ignores junk messages.
 // ============================================================
+// HARNESS 17 — edit/duplicate load the task into the add form, today and past days
+// ============================================================
+async function harness17() {
+  console.log("\n== Harness 17: edit + duplicate prefill ==");
+  const p2 = (n) => String(n).padStart(2, "0");
+  const ds = (t) => `${t.getFullYear()}-${p2(t.getMonth() + 1)}-${p2(t.getDate())}`;
+  const today = ds(new Date()), yest = ds(new Date(Date.now() - 864e5));
+  const store = {
+    name: "X", date: today, deviceId: "dev", timer: { activeId: null, startedAt: null },
+    entries: [{ id: "t1", project: "Hydroflux", category: "Development", description: "today task", accSec: 5400, updatedAt: 1 }],
+    history: { [yest]: [{ id: "y1", project: "VSB", category: "Retired Category", description: "yest task", accSec: 3600, updatedAt: 1 }] },
+  };
+  const dom = new JSDOM(html, { runScripts: "dangerously", url: "https://localhost/" });
+  const win = dom.window;
+  win.chrome = {
+    storage: { local: { get: async (k) => (k === null ? JSON.parse(JSON.stringify(store)) : {}), set: async (o) => { Object.assign(store, o); } } },
+    tabs: { query: async () => [] },
+  };
+  win.matchMedia = () => ({ matches: false });
+  win.fetch = async () => ({ text: async () => "" });
+  win.crypto = { randomUUID: () => "new-" + Math.random() };
+  const sc = win.document.createElement("script");
+  sc.textContent = jsSrc;
+  win.document.body.appendChild(sc);
+  win.document.dispatchEvent(new win.Event("DOMContentLoaded"));
+  await sleep(80);
+  const $ = (id) => win.document.getElementById(id);
+  const form = () => ({ proj: $("projSelect").value, cat: $("catSelect").value, desc: $("descInput").value, time: win.formTimeStr(), btn: $("addProject").textContent });
+
+  win.document.querySelector(".entry .edit").click();
+  await sleep(20);
+  let f = form();
+  A(f.desc === "today task" && f.proj === "Hydroflux" && f.cat === "Development" && f.time === "01:30" && f.btn === "Save changes", "edit fills the form with today's task");
+  //! The live category list arriving after the form is filled must not reset the picked category.
+  win.fillSelect($("catSelect"), ["Meeting (General)", "Development"]);
+  A($("catSelect").value === "Development", "a category list refresh keeps the category being edited");
+  $("cancelEdit").click();
+  await sleep(10);
+
+  win.setViewDate(yest);
+  await sleep(20);
+  win.document.querySelector(".entry .edit").click();
+  await sleep(20);
+  f = form();
+  A(f.desc === "yest task" && f.proj === "VSB" && f.time === "01:00" && f.btn === "Save changes", "edit fills the form with a past day's task (was blank)");
+  A(f.cat === "Retired Category", "a category no longer in the live list still shows, not a different one");
+  $("descInput").value = "yest task edited";
+  $("addProject").click();
+  await sleep(30);
+  A(store.history[yest][0].description === "yest task edited" && store.history[yest][0].category === "Retired Category", "saving a past day's edit updates that task, category intact");
+  A(store.history[yest].length === 1, "the edit did not add a second task");
+
+  win.document.querySelector(".entry .dup").click();
+  await sleep(20);
+  f = form();
+  A(f.desc === "yest task edited" && f.proj === "VSB" && f.time === "00:00" && f.btn === "+ Add Project", "duplicate fills the form as a new task with time 00:00");
+  win.setPickTime ? win.setPickTime($("timePick"), 1800) : null;
+  $("addProject").click();
+  await sleep(30);
+  A(store.history[yest].length === 2 && store.history[yest][1].id !== store.history[yest][0].id, "duplicate adds a new task to the same day");
+  A(store.history[yest][1].accSec === 1800 && store.history[yest][0].accSec === 3600, "the copy has its own time; the original is untouched");
+  dom.window.close();
+}
+
+// ============================================================
 async function harness16() {
   console.log("\n== Harness 16: service-worker submitted mark ==");
   //! Live day must be the real today — a fixed date rolls over into history and the entry check below fails.
   const now = new Date(), p2 = (n) => String(n).padStart(2, "0");
   const store = { date: `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`, entries: [{ id: "e1", project: "P", category: "C", description: "d", accSec: 60 }], history: {}, submittedDays: {} };
-  let onMessage = null;
+  const msgListeners = [];
+  const onMessage = (...a) => msgListeners.forEach((f) => f(...a));
   const noop = () => {};
   const chromeMock = {
     action: { setBadgeText: noop, setBadgeBackgroundColor: noop, setTitle: noop },
     storage: { local: makeSharedStorageMock(store), onChanged: { addListener: noop } },
     alarms: { create: noop, clear: noop, onAlarm: { addListener: noop } },
     notifications: { create: noop },
-    runtime: { onInstalled: { addListener: noop }, onStartup: { addListener: noop }, onMessage: { addListener: (fn) => { onMessage = fn; } } },
+    runtime: { id: "ext", getURL: (p) => "chrome-extension://ext/" + p, onInstalled: { addListener: noop }, onStartup: { addListener: noop }, onMessage: { addListener: (fn) => msgListeners.push(fn) } },
   };
-  const pre = ["prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n") + "\n";
+  const pre = ["prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js", "gdrive.js", "fill.js"].map((f) => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n") + "\n";
   new Function("chrome", "importScripts", pre + fs.readFileSync(path.join(ROOT, "background.js"), "utf8"))(chromeMock, () => {});
   await sleep(20);
-  A(typeof onMessage === "function", "the worker listens for the form tab's message");
+  A(msgListeners.length > 0, "the worker listens for the form tab's message");
   onMessage({ tt: "markSubmitted", date: "not-a-date" });
   onMessage({ tt: "somethingElse", date: "2026-09-26" });
   onMessage(null);
@@ -2149,6 +2241,15 @@ async function harness16() {
   A(info && info.method === "auto" && info.at > 0 && info.by === store.deviceId, "a real mark is stamped by this device");
   A((store.ttLog || []).some((e) => e.type === "mark-submitted" && e.via === "form tab"), "the mark is in the activity log");
   A(store.entries.length === 1 && store.entries[0].id === "e1", "marking does not disturb the day's entries");
+
+  // Final Submit's fill request: only the extension's own pages may start one, and a bad job is refused.
+  const ext = { id: "ext", url: "chrome-extension://ext/popup.html" };
+  const job = { date: "2026-09-26", name: "N", entries: [{ id: "e1", project: "P", category: "C", description: "d", hhmm: "00:01" }] };
+  let reply = "none";
+  onMessage({ tt: "fill", job }, { id: "ext", url: "https://techzu.fillout.com/t/x" }, (r) => { reply = r; });
+  A(reply === "none", "a fill request from a web page is ignored");
+  onMessage({ tt: "fill", job: { ...job, date: "bad" } }, ext, (r) => { reply = r; });
+  A(reply && reply.error, "a fill request with a bad date is refused");
 }
 
 //! A harness awaiting a promise that never settles lets Node exit early with code 0 and no summary
@@ -2172,6 +2273,7 @@ process.on("exit", () => { if (!finished) { console.error("\nSMOKE: DID NOT FINI
   await harness14();
   await harness15();
   await harness16();
+  await harness17();
   finished = true;
   console.log(fails === 0 ? "\nSMOKE: ALL PASS" : `\nSMOKE: ${fails} FAILURE(S)`);
   process.exit(fails === 0 ? 0 : 1);

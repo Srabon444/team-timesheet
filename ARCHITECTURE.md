@@ -11,10 +11,11 @@ MV3 extension. Popup for daily tracking + a full-page tab view
 | `sync-core.js` | Sync v2 core (`TTCore`): stamps, merge, restore, envelopes, activity-log events, all Drive calls. **Byte-identical copy** in `desktop/src/lib/sync-core.js` on the desktop branches — change both together. |
 | `data.js` | Data layer (`TTData`): `withData(fn)` = Web Lock `tt-data` + fresh `storage.get` + one `storage.set` of the changed keys. Rolls the day over, folds timers, keeps `ttLog` and `recoveryPoints`. Loaded by popup, tab and the service worker. |
 | `gdrive.js` | Token + HTTP transport for `TTCore.sync`; `gdCommitRemote` merges Drive into fresh local data under the lock. |
-| `popup.js` | Timer engine, views, add/edit, day navigation, and the cross-frame form automation. Every data change goes through `mutate(fn)` (→ `TTData.withData`). Loaded by both `popup.html` and `tab.html`. |
+| `popup.js` | Timer engine, views, add/edit/duplicate, day navigation, and Final Submit (validation + confirm, then hands the fill to the service worker). Every data change goes through `mutate(fn)` (→ `TTData.withData`). Loaded by both `popup.html` and `tab.html`. |
 | `popup.html` | Popup UI (setup view + main view). |
+| `fill.js` | Fillout form automation (`startFill` → `ensureFormTab` → `fillFormOnPage`). Runs in the service worker; popup/tab load it only for `FORM_URL`. |
 | `tab.html` + `tab.js` | Full-page view: reuses popup.js's globals for the "Today" panel, adds Dashboard (stats) and Settings panels. `tab.js` must not redeclare `$`/`S`. |
-| `background.js` | Service worker: 1-minute alarm that checks the daily-limit and fires one OS notification per day (`warnedDate`). Reads `dailyLimitHours` from storage directly (separate realm). Also writes the form tab's auto "submitted" mark (the form page can't take the data lock). |
+| `background.js` | Service worker: 1-minute alarm that checks the daily-limit and fires one OS notification per day (`warnedDate`). Reads `dailyLimitHours` from storage directly (separate realm). Also writes the form tab's auto "submitted" mark (the form page can't take the data lock), and runs Final Submit's fill (`tt:"fill"` message → `startFill`, extension pages only). |
 | `popup.css` / `tab.css` / `theme.css` | Styles + light/dark custom properties. |
 | `test/smoke.js` | jsdom-driven smoke suite (no framework). `npm test`. |
 | `test/fixtures/form.html` | Real captured form HTML (21 names) for `parseNames` tests. |
@@ -45,7 +46,12 @@ live day, else `S.history[viewDate]`. Writes go through `mutate(fn)` against
 
 ## Form automation (the delicate part)
 
-Orchestrated from the popup (`fillFormOnPage`), alternating
+Runs in the service worker (`fill.js` `startFill`, started by a `tt:"fill"`
+message from Final Submit). It used to run in the popup, which Chrome closes
+the moment it loses focus — that killed runs mid-entry. One run at a time
+(`fillRunning`, a second request gets `{busy:true}`); progress and the result
+go to storage `fillStatus`, which every window shows; a stop also raises an
+OS notification. Alternates
 `chrome.scripting.executeScript` between the top frame and the discovered
 subform frame:
 
@@ -56,11 +62,13 @@ subform frame:
    `waitForFormReady` (poll `pageFormReady`, React can take 1.3s+).
 2. `pageSelectName` (top frame) — skip if already set.
 3. Per entry: `pageClickCreate` → `waitForSubframe` (probe `allFrames` for
-   `input[placeholder="Task Description"]`) → `frameFillEntry` in that
+   `input[placeholder="Task Description"]` **and** the "Select Project"
+   placeholder, so the react-select is mounted) → `frameFillEntry` in that
    frameId (react-select Project/Category, native-setter Description/Time,
-   click the iframe's own Submit) → `waitForSubframeGone` →
+   click the iframe's own Submit) → `waitForSubframeGone` (still open = not
+   saved → the run stops, never fills the next entry into that modal) →
    `waitForEntryVisible` (entries-list race).
-4. `finalSubmit` marks the successfully-added entries `submitted`. Operates
+4. `startFill` marks the successfully-added entries `submitted`. Operates
    on `currentEntries()`, so a past day can be filled too (with a reminder
    to set the form's Date field first). On success it also fires a dated
    Drive backup (`gdBackupNow`, fire-and-forget, errors swallowed) — captures

@@ -7,7 +7,7 @@
 
 //* Pure helpers + the reminder texts; prayer.js's networked half is never called from here —
 //* the service worker only reads the month cache the popup already fetched.
-importScripts("prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js");
+importScripts("prayer.js", "prayer-hadiths.js", "sync-core.js", "data.js", "gdrive.js", "fill.js");
 
 const ALARM = "tick";
 const PRAYER_ALARM = "prayerTick";
@@ -148,4 +148,21 @@ chrome.runtime.onMessage.addListener((msg) => {
     TTCore.setSubmitted(d, msg.date, msg.method === "manual" ? "manual" : "auto");
     TTData.log(d, [{ type: "mark-submitted", date: msg.date, method: "auto", via: "form tab" }]);
   }).catch((e) => console.error("mark submitted failed", e));
+});
+
+//* Final Submit from the popup or full view lands here: fill.js startFill() owns the whole run, so
+//* closing the popup mid-fill no longer kills it. The reply goes back at once; progress and the
+//* result go to storage "fillStatus".
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.tt !== "fill") return;
+  //! Only the extension's own pages may start a fill, never a script running in a web page.
+  if (sender.id !== chrome.runtime.id || !String(sender.url || "").startsWith(chrome.runtime.getURL(""))) return;
+  const job = msg.job || {};
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(job.date)) || !job.name || !Array.isArray(job.entries) || !job.entries.length) {
+    sendResponse({ error: "bad fill request" });
+    return;
+  }
+  if (fillRunning) { sendResponse({ busy: true }); return; }
+  startFill(job).catch((e) => console.error("fill failed", e));
+  sendResponse({ started: true });
 });

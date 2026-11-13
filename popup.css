@@ -170,14 +170,14 @@ select {
 .entry.active .live::before { content: "\25CF"; margin-right: 5px; animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0.15; } }
 .entry .acts { display: flex; align-items: center; gap: 6px; }
-.entry .edit, .entry .del {
+.entry .dup, .entry .edit, .entry .del {
   width: 28px; height: 28px; padding: 0;
   border-radius: 8px; border: 1px solid var(--border-color);
   background: var(--bg-page); cursor: pointer; font-size: 13px; line-height: 1;
   transition: background .12s ease, color .12s ease, border-color .12s ease;
 }
-.entry .edit { color: var(--accent-light); }
-.entry .edit:hover { border-color: var(--accent); background: var(--accent-tint); }
+.entry .dup, .entry .edit { color: var(--accent-light); }
+.entry .dup:hover, .entry .edit:hover { border-color: var(--accent); background: var(--accent-tint); }
 .entry .del { color: var(--danger-light); font-size: 16px; }
 .entry .del:hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 
