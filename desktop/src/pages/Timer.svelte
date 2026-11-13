@@ -20,7 +20,7 @@
   let anchor = $state(nav.jumpDate || todayStr()); // day-strip window end
   nav.jumpDate = null;
   let tab = $state("timesheet");
-  let modal = $state(null); // { entry|null, presetProject?, presetCategory? }
+  let modal = $state(null); // { entry|null, presetProject?, presetCategory?, presetDescription? }
   // Copy Tasks: checkbox-select entries on the viewed day, then copy them
   // (fresh, time reset to 0) into a same-or-future day.
   let copyMode = $state(false);
@@ -276,7 +276,9 @@
               {isRunning ? "❚❚" : "▶"}
             </button>
           {/if}
-          <button class="iconbtn edit" onclick={() => (modal = { entry: e })}>✎</button>
+          <button class="iconbtn dup" title="Duplicate"
+                  onclick={() => (modal = { entry: null, presetProject: e.project, presetCategory: e.category, presetDescription: e.description })}>⧉</button>
+          <button class="iconbtn edit" title="Edit" onclick={() => (modal = { entry: e })}>✎</button>
           <button class="iconbtn del" onclick={() => del(e)}>✕</button>
         </div>
       {/each}
@@ -372,6 +374,7 @@
     entry={modal.entry}
     presetProject={modal.presetProject || ""}
     presetCategory={modal.presetCategory || ""}
+    presetDescription={modal.presetDescription || ""}
     onclose={() => (modal = null)}
   />
 {/if}
@@ -548,7 +551,7 @@
     background: var(--bg-page); cursor: pointer; font-size: 13px;
   }
   .iconbtn.play { color: var(--success); border-color: var(--success); }
-  .iconbtn.edit { color: var(--accent-light); border-color: var(--accent-light); }
+  .iconbtn.edit, .iconbtn.dup { color: var(--accent-light); border-color: var(--accent-light); }
   .iconbtn.del { color: var(--danger-light); border-color: var(--danger-light); }
   .iconbtn:hover { background: var(--bg-surface-hover); }
   .copyChk { width: auto; min-height: 0; flex: none; margin: 0; }

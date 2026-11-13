@@ -7,9 +7,9 @@
     currentProjects, currentCategories,
   } from "../lib/store.svelte.js";
 
-  // { date, entry|null (edit mode), presetProject, presetCategory } — parent
-  // controls visibility. Presets come from the header timer's hover menu.
-  let { date, entry = null, presetProject = "", presetCategory = "", onclose } = $props();
+  // { date, entry|null (edit mode), presetProject, presetCategory, presetDescription } — parent
+  // controls visibility. Presets come from the header timer's hover menu, or a row's Duplicate.
+  let { date, entry = null, presetProject = "", presetCategory = "", presetDescription = "", onclose } = $props();
 
   //! The modal is mounted fresh on every open, so reading the props once here is deliberate.
   //! untrack() states that; without it Svelte flags each read as a missed reactive dependency.
@@ -22,7 +22,7 @@
   // A preset (hover-menu pick) wins over both.
   let project = $state(untrack(() => entry ? entry.project : (presetProject || (lastForDay ? lastForDay.project : ""))));
   let category = $state(untrack(() => entry ? entry.category : (presetCategory || (lastForDay ? lastForDay.category : currentCategories()[2]))));
-  let description = $state(untrack(() => (entry ? entry.description : "")));
+  let description = $state(untrack(() => (entry ? entry.description : presetDescription)));
   // Seed from the entry's LIVE elapsed (not just accSec), so editing a
   // running task shows the real running time — the fix for elapsed getting
   // reset when you edit a task mid-run.
