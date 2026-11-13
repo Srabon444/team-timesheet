@@ -83,6 +83,18 @@ jobs:
           node -v; java -version; echo "NDK_HOME=$NDK_HOME"
           npx tauri -V || true
 
+      # Same as the desktop releases: the app's version follows the release
+      # (v0.0.N), so Settings/App info shows which APK is installed.
+      #! versionCode is set explicitly: derived from 0.0.N it would be N, below
+      #! the 1000 every APK built from the old static "0.1.0" carries, and
+      #! Android refuses that as a downgrade.
+      - name: Set app version to match the release
+        run: |
+          jq --arg v "0.0.${{ github.run_number }}" --argjson c "$((1000 + ${{ github.run_number }}))" \
+            '.version = $v | .bundle.android.versionCode = $c' \
+            desktop/src-tauri/tauri.conf.json > /tmp/tauri.conf.json.tmp
+          mv /tmp/tauri.conf.json.tmp desktop/src-tauri/tauri.conf.json
+
       - name: Build Android APK (debug, arm64)
         working-directory: desktop
         run: |
